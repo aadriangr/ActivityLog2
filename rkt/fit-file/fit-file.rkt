@@ -21,6 +21,65 @@
 ;;
 ;; The structure of a FIT file is described in the FIT SDK which you can
 ;; download form https://www.thisisant.com/resources/fit/
+;;
+;; DEVELOPER FIELDS SUPPORT (FIT 2.0)
+;;
+;; This code supports reading FIT files with developer fields -- these are
+;; recorded by 3rd party devices, such as running power and blood oxygen
+;; monitors.  Activities containing such fields can be read with the following
+;; limitations:
+;;
+;; An activity will record 3rd party applications in the 'developer-data-id
+;; entry, which contains a list defining the application identifier (16 byte
+;; value) to an application index.  It looks like this:
+;;
+;;     (developer-data-ids
+;;      ((appliction-id . #(0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0))
+;;       (developer-data-index . 0)))
+;;
+;; Fields are defined in the 'field-descriptions entry.  For each field, we
+;; have the application index, the field number, the native field number (if
+;; this field corresponds to a native field in the record), the type, a name
+;; and a unit.  It looks like this:
+;;
+;;    (field-descriptions
+;;     ((developer-data-index . 0)
+;;      (field-def-number . 6)
+;;      (native-msg-num . 5)
+;;      (fit-base-type . 134)
+;;      (field-name . #"Distance")
+;;      (units . #"Meters"))
+;;     ((developer-data-index . 0)
+;;      (field-def-number . 5)
+;;      (native-msg-num . 6)
+;;      (fit-base-type . 136)
+;;      (field-name . #"Speed")
+;;      (units . #"M/S")))
+;;
+;; The records will contain an entry mapping the developer field name,
+;; converted to a symbol, to the value.  LIMITATION: The developer field name
+;; does not have to be unique, so there is a potential for confusion in the
+;; record if different applications define fields by the same name or the same
+;; name as the native fields.  In the example above "Distance" and "Speed"
+;; developer fields are defined.  Luckily for us the use capital D and S
+;; letters so they are different from the distance and speed native field and
+;; can be accessed using an ASSQ or DICT-REF.  Since the record is actually an
+;; ALIST, it can contain duplicate entries, and the fields would always be
+;; accessible using iteration, but it would be difficult to tell which is
+;; which...  The native fields will always come first, so ASSQ and DICT-REF
+;; will always find the native values even if a 3rd party application tries to
+;; "hijack" them.
+;;
+;; As an additional processing step, if a developer field defines a
+;; corresponding native field, and there is no value recorded for the native
+;; field, a native field will be created by the code.  For example, a running
+;; power meter will record power in a "Running Power" developer field and will
+;; indicate that this field corresponds to the "power"(7) native field.  If
+;; there is no value recorded for the native "power" field, this code will
+;; create a "power" field with the same value as the "Running Power" developer
+;; field.  This mechanism allows the rest of the ActivityLog2 application to
+;; ignore developer fields (which it currently does), but still be able to use
+;; power data.
 
 (require racket/class
          racket/file
@@ -618,6 +677,14 @@
     ;; referencing the dev fields in trackpoint data.
     (define developer-data-ids '())
     (define field-descriptions '())
+    ;; The developer fields allow defining which native field they replace in
+    ;; a record.  For example, a 3rd party running power meter will record
+    ;; power in a developer field, but it will also indicate that its field
+    ;; replaces the native power field.
+    ;;
+    ;; We keep a mapping from native to developer fields, so that we can
+    ;; replace empty native fields with their corresponding developer fields.
+    (define native-to-dev '())
 
     (define display-next-record #f)
     (define timer-stopped #f)
@@ -715,6 +782,17 @@
                  (not (dict-ref new-fields (car t) #f)))
                record)))
 
+    (define (replace-native-fields record)
+      ;; Replace any missing or empty native fields in this record with values
+      ;; from developer fields, if such fields exist.
+      (for ([n (in-list native-to-dev)])
+        (match-define (cons native developer) n)
+        (unless (dict-ref record native #f) ; only if the native field is not present
+          (define v (dict-ref record developer #f))
+          (when v
+            (set! record (cons (cons native v) record)))))
+      record)
+
     (define/override (on-file-id file-id)
       (unless activity-guid
         ;; Some activitites contain multiple file-id messages, keep the first
@@ -767,7 +845,7 @@
 
     (define/override (on-record record)
       ;; (display (format "*** RECORD ~a~%" (dict-ref record 'timestamp #f)))
-      (set! records (cons (process-fields record) records))
+      (set! records (cons (replace-native-fields (process-fields record)) records))
       ;; (when display-next-record
       ;;   (display record)(newline)
       ;;   (set! display-next-record #f))
@@ -900,7 +978,20 @@
 
     (define/override (on-developer-data-id data)
       (set! developer-data-ids (cons data developer-data-ids)))
+
     (define/override (on-field-description data)
+      ;; Add a mapping from the native field number to this developer field,
+      ;; if there is one.  NOTE: we currently rely on the fact that developer
+      ;; field names are unique and don't conflict with other fields, this
+      ;; probably works with existing devices today.
+      (let ((native (dict-ref data 'native-msg-num #f))
+            (name (dict-ref data 'field-name #f)))
+        (when (and name native)
+          (let ((nname (dict-ref *record-fields* native #f)))
+            (when nname
+              (let ((sym (string->symbol (bytes->string/utf-8 name))))
+                (set! native-to-dev (cons (cons nname sym) native-to-dev)))))))
+
       (set! field-descriptions (cons data field-descriptions)))
 
     (define/public (display-devices)

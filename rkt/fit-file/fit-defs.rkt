@@ -163,6 +163,8 @@
     (84 . stance-time-balance)
     (85 . stride-length)))
 
+(provide *record-fields*)
+
 (define *lap-fields*
   '((254 . message-index)
     (253 . timestamp)
