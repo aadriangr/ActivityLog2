@@ -104,6 +104,8 @@
                                             #:basic-checks-only? (bc #f)
                                             #:expected-row-count (rc #f)
                                             #:expected-series-count (sc #f)
+                                            #:expected-session-count (nsessions 1)
+                                            #:extra-db-checks (db-check #f)
                                             #:extra-df-checks (df-check #f))
   (check-not-exn
    (lambda ()
@@ -114,12 +116,18 @@
          ;; Do some extra checks on this imported file
          (do-post-import-tasks db #;(lambda (msg) (printf "~a~%" msg) (flush-output)))
          ;; (printf "... done with the post import tasks~%")(flush-output)
-         (for ((sid (aid->sid (cdr result) db)))
+         (when db-check
+           (db-check db))
+         (define sids (aid->sid (cdr result) db))
+         (check = (length sids) nsessions)
+         (for ((sid (in-list sids))
+               (expected-row-count (in-list (if (integer? rc) (list rc) rc)))
+               (expected-series-count (in-list (if (integer? sc) (list sc) sc))))
            (let ((df (session-df db sid)))
              ;; (printf "got the session~%")(flush-output)
              (check-session-df df
-                               #:expected-row-count rc
-                               #:expected-series-count sc)
+                               #:expected-row-count expected-row-count
+                               #:expected-series-count expected-series-count)
              ;; (printf "check session done~%")(flush-output)
              (check-intervals df)
              ;; (printf "check intervals done~%")(flush-output)

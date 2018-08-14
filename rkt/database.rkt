@@ -2,7 +2,7 @@
 ;; database.rkt -- database access utilities
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -24,6 +24,8 @@
          racket/contract
          racket/match
          racket/async-channel
+         racket/port
+         racket/format
          "dbutil.rkt"
          "dbapp.rkt"
          "fit-file/fit-defs.rkt"
@@ -66,7 +68,7 @@
                 (let ((data (vector-ref row index)))
                   (set! index (+ index 1))
                   (unless (sql-null? data)
-                          (set! result (cons (cons field data) result)))))
+                    (set! result (cons (cons field data) result)))))
               fields)
     (reverse result)))
 
@@ -79,10 +81,12 @@
                  "select id from ACTIVITY where guid = ?"))))
     (lambda (guid db)
       (with-handlers (((lambda (e) #t) (lambda (e) #f)))
-                     (query-value db stmt guid)))))
+        (query-value db stmt guid)))))
+
+(define xdata-fields (make-parameter #f))
 
 (define db-insert-activity
-  (let ((stmt (virtual-statement 
+  (let ((stmt (virtual-statement
                (lambda (dbsys)
                  "insert into ACTIVITY(start_time, guid) values (?, ?)"))))
     (lambda (activity db)
@@ -92,13 +96,16 @@
          (let ((start-time (dict-ref activity 'start-time #f))
                (guid (dict-ref activity 'guid #f)))
            (query-exec db stmt start-time (or guid sql-null))
-           (let ((activity-id (db-get-last-pk "ACTIVITY" db))
-                 (sessions (assq 'sessions activity)))
-             (when sessions
-                   (for-each (lambda (session)
-                               (db-insert-session session activity-id db))
-                             (cdr sessions)))
-             activity-id)))))))
+           (define apps (xdata-synx-applications db activity))
+           (define fields (xdata-sync-fields db activity apps))
+           (parameterize ([xdata-fields fields])
+             (let ((activity-id (db-get-last-pk "ACTIVITY" db))
+                   (sessions (assq 'sessions activity)))
+               (when sessions
+                 (for-each (lambda (session)
+                             (db-insert-session session activity-id db))
+                           (cdr sessions)))
+               activity-id))))))))
 
 (define db-insert-section-summary
   (let ((stmt (virtual-statement
@@ -141,17 +148,17 @@
                    avg_left_ppp_start,
                    avg_left_ppp_end,
                    avg_right_ppp_start,
-                   avg_right_ppp_end) 
+                   avg_right_ppp_end)
                  values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")))
         (fields `(total-timer-time total-elapsed-time
-                                   total-distance total-calories avg-speed 
+                                   total-distance total-calories avg-speed
                                    max-speed avg-heart-rate max-heart-rate
                                    avg-cadence max-cadence
                                    total-cycles avg-cycle-distance
-                                   total-ascent total-descent 
+                                   total-ascent total-descent
                                    total-corrected-ascent total-corrected-descent
                                    swim-stroke
-                                   avg-vertical-oscillation avg-stance-time 
+                                   avg-vertical-oscillation avg-stance-time
                                    avg-stance-time-percent
                                    avg-power max-power normalized-power
                                    left-right-balance
@@ -163,7 +170,7 @@
                                    avg-left-ppp-start avg-left-ppp-end
                                    avg-right-ppp-start avg-right-ppp-end)))
     (lambda (record db)
-      (let ((values (map (lambda (x) 
+      (let ((values (map (lambda (x)
                            (let ((y (if (procedure? x)
                                         (x record)
                                         (dict-ref record x #f))))
@@ -177,8 +184,8 @@
 (define db-insert-session
   (let ((stmt (virtual-statement
                (lambda (dbsys)
-                 "insert into A_SESSION(activity_id, summary_id, name, description, 
-                                        start_time, sport_id, sub_sport_id, pool_length, pool_length_unit, 
+                 "insert into A_SESSION(activity_id, summary_id, name, description,
+                                        start_time, sport_id, sub_sport_id, pool_length, pool_length_unit,
                                         training_effect, training_stress_score, intensity_factor)
                   values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))))
     (lambda (session activity-id db)
@@ -202,18 +209,19 @@
         ;; #(1 #f), the situation would magically fix itself when editing the
         ;; head line for the session, as that saved the sub-sport correctly.
         (when (equal? sub-sport 0) (set! sub-sport sql-null))
-        
-        (query-exec 
-         db stmt activity-id summary-id name description 
+
+        (query-exec
+         db stmt activity-id summary-id name description
          start-time sport-id sub-sport pool-length pool-length-unit training-effect
-         training-stress-score intensity-factor))
+         training-stress-score intensity-factor)
+        (xdata-store-summary-values db session summary-id (xdata-fields)))
       (let ((session-id (db-get-last-pk "A_SESSION" db))
             (laps (assq 'laps session))
             (devices (assq 'devices session)))
 
         (when laps
-              (for-each (lambda (lap) (db-insert-lap lap session-id db))
-                        (cdr laps)))
+          (for-each (lambda (lap) (db-insert-lap lap session-id db))
+                    (cdr laps)))
         (when devices
           (for ([di (make-devinfo-list (cdr devices))])
             (put-devinfo db di session-id)))))))
@@ -225,12 +233,13 @@
     (lambda (lap session-id db)
       (let ((summary-id (db-insert-section-summary lap db))
             (start-time (dict-ref lap 'start-time sql-null)))
-        (query-exec db stmt session-id start-time summary-id))
+        (query-exec db stmt session-id start-time summary-id)
+        (xdata-store-summary-values db lap summary-id (xdata-fields)))
       (let ((lap-id (db-get-last-pk "A_LAP" db))
             (lengths (assq 'lengths lap)))
-      (when lengths
-            (for-each (lambda (length) (db-insert-length length lap-id db))
-                      (cdr lengths)))))))
+        (when lengths
+          (for-each (lambda (length) (db-insert-length length lap-id db))
+                    (cdr lengths)))))))
 
 (define db-insert-length
   (let ((stmt (virtual-statement
@@ -239,23 +248,24 @@
     (lambda (length session-id db)
       (let ((summary-id (db-insert-section-summary length db))
             (start-time (dict-ref length 'start-time sql-null)))
-        (query-exec db stmt session-id start-time summary-id))
+        (query-exec db stmt session-id start-time summary-id)
+        (xdata-store-summary-values db length summary-id (xdata-fields)))
       (let ((length-id (db-get-last-pk "A_LENGTH" db))
             (track (assq 'track length)))
         (when track
-              (for-each (lambda (trackpoint) (db-insert-trackpoint trackpoint length-id db))
-                        (cdr track)))))))
+          (for-each (lambda (trackpoint) (db-insert-trackpoint trackpoint length-id db))
+                    (cdr track)))))))
 
 (define db-insert-trackpoint
   (let ((stmt (virtual-statement
                (lambda (dbsys)
-                "insert into A_TRACKPOINT (
+                 "insert into A_TRACKPOINT (
                    length_id,
                    timestamp,
                    position_lat, position_long, altitude, distance,
                    cadence, speed, heart_rate,
                    vertical_oscillation, stance_time, stance_time_percent,
-                   power, accumulated_power, left_right_balance, 
+                   power, accumulated_power, left_right_balance,
                    left_torque_effectiveness, right_torque_effectiveness,
                    left_pedal_smoothness, right_pedal_smoothness,
                    left_pco, right_pco, left_pp_start, left_pp_end, right_pp_start, right_pp_end,
@@ -276,7 +286,7 @@
                               (lon (dict-ref tp 'position-long #f)))
                           (and lat lon (lat-lon->tile-code lat lon)))))))
     (lambda (trackpoint length-id db)
-      (let ((values (map (lambda (x) 
+      (let ((values (map (lambda (x)
                            (let ((y (if (procedure? x)
                                         (x trackpoint)
                                         (dict-ref trackpoint x #f))))
@@ -285,11 +295,93 @@
                                    (#t sql-null))))
                          fields)))
         ;; Bulk import ocasionally fails here...
-        (with-handlers (((lambda (e) #t) 
+        (with-handlers (((lambda (e) #t)
                          (lambda (e)
                            (display (format "Failed to insert record: ~a, ~a~%" values e))
                            (raise e))))
-                       (apply query-exec db stmt length-id values))))))
+          (apply query-exec db stmt length-id values)
+          (define id (db-get-last-pk "A_TRACKPOINT" db))
+          (xdata-store-values db trackpoint id (xdata-fields)))))))
+
+
+;;......................................................... xdata-import ....
+
+;; Store any XDATA applications from ACTIVITY in the database and return a
+;; hash mapping the application index to the XDATA_APP.id key.  New entries
+;; are only created if they don't exist.
+(define (xdata-synx-applications db activity)
+  (define apps (dict-ref activity 'developer-data-ids #f))
+  (define result (make-hash))
+  (when apps
+    (for ([app (in-list apps)])
+      (define devid (dict-ref app 'developer-id sql-null))
+      (define appid (dict-ref app 'application-id #f))
+      (define appindex (dict-ref app 'developer-data-index #f))
+      (when (and appid appindex)
+        (define id (query-maybe-value db "select id from XDATA_APP where app_guid = ?" appid))
+        (unless id
+          (query-exec db "insert into XDATA_APP(app_guid, dev_guid) values(?, ?)" appid devid)
+          (set! id (db-get-last-pk "XDATA_APP" db)))
+        (hash-set! result appindex id))))
+  result)
+
+;; Store XDATA fields from ACTIVITY in the database and return a hash mapping
+;; the field key to the XDATA_FIELD.id.  Fields are only created if they don't
+;; already exist.  XDATA-APP-MAPPING is a hash returned by
+;; `xdata-synx-applications` and is used to find the XDATA_APP.id for each
+;; field.
+(define (xdata-sync-fields db activity xdata-app-mapping)
+  (define fields (dict-ref activity 'field-descriptions #f))
+  (define result (make-hash))
+  (when fields
+    (for ([field (in-list fields)])
+      (define name (dict-ref field 'field-name #f))
+      (define key (dict-ref field 'field-key #f))
+      (define units (dict-ref field 'units sql-null))
+      (define appindex (dict-ref field 'developer-data-index #f))
+      (define native-msg (dict-ref field 'native-msg-num sql-null))
+      (define native-field (dict-ref field 'native-field-num sql-null))
+      (when (and name appindex)
+        (define app (hash-ref xdata-app-mapping appindex #f))
+        (when app
+          (define id (query-maybe-value
+                      db "select id from XDATA_FIELD where app_id = ? and name = ?"
+                      app name))
+          (unless id
+            (query-exec db "insert into XDATA_FIELD(app_id, name, unit_name, native_message, native_field) values (?, ?, ?, ?, ?)"
+                        app name units native-msg native-field)
+            (set! id (db-get-last-pk "XDATA_FIELD" db)))
+          (hash-set! result (or key (string->symbol name)) id)))))
+  result)
+
+(define sql-insert-xdata-value
+  (virtual-statement
+   (lambda (dbsys)
+     "insert into XDATA_VALUE(trackpoint_id, field_id, val) values(?, ?, ?)")))
+
+;; Insert XDATA values from RECORD into the database.  XDATA-FIELDS is a value
+;; returned by `xdata-sync-fields` and is used to find the XDATA_FIELD.id
+;; for each field.  ID is the A_TRACKPOINT.id for which we store the XDATA.
+(define (xdata-store-values db record id xdata-fields)
+  (for (([field-key field-id] (in-hash xdata-fields)))
+    (define val (dict-ref record field-key #f))
+    (when val
+      (query-exec db sql-insert-xdata-value id field-id val))))
+
+(define sql-insert-xdata-summary-value
+  (virtual-statement
+   (lambda (dbsys)
+     "insert into XDATA_SUMMARY_VALUE(summary_id, field_id, val) values(?, ?, ?)")))
+
+;; Insert XDATA summary values from RECORD into the database.  XDATA-FIELDS is
+;; a value returned by `xdata-sync-fields` and is used to find the
+;; XDATA_FIELD.id for each field.  ID is the SECTION_SUMMARY.id for which we
+;; store the XDATA.
+(define (xdata-store-summary-values db record id xdata-fields)
+  (for (([field-key field-id] (in-hash xdata-fields)))
+    (define val (dict-ref record field-key #f))
+    (when val
+      (query-exec db sql-insert-xdata-summary-value id field-id val))))
 
 
 ;;............................................ Equipment / Device import ....
@@ -327,15 +419,15 @@
   (if (< (devinfo-ts d1) (devinfo-ts d2))
       (join-devinfo d2 d1)
       (devinfo
-        (devinfo-ts d1)
-        (devinfo-sn d1)
-        (or (devinfo-manufacturer d1) (devinfo-manufacturer d2))
-        (or (devinfo-product d1) (devinfo-product d2))
-        (or (devinfo-name d1) (devinfo-name d2))
-        (or (devinfo-swver d1) (devinfo-swver d2))
-        (or (devinfo-hwver d1) (devinfo-hwver d2))
-        (or (devinfo-bv d1) (devinfo-bv d2))
-        (or (devinfo-bs d1) (devinfo-bs d2)))))
+       (devinfo-ts d1)
+       (devinfo-sn d1)
+       (or (devinfo-manufacturer d1) (devinfo-manufacturer d2))
+       (or (devinfo-product d1) (devinfo-product d2))
+       (or (devinfo-name d1) (devinfo-name d2))
+       (or (devinfo-swver d1) (devinfo-swver d2))
+       (or (devinfo-hwver d1) (devinfo-hwver d2))
+       (or (devinfo-bv d1) (devinfo-bv d2))
+       (or (devinfo-bs d1) (devinfo-bs d2)))))
 
 ;; Parse a devices list (list of device-info ALISTS) as produced by
 ;; 'read-activity-from-file' and return a list of devinfo structures.  Note
@@ -367,11 +459,11 @@
      ;; NOTE: when using the lower 16 bits of the equipment serial, we might
      ;; have duplicates, in that case, just select the biggest serial number.
      "select id
-       from EQUIPMENT
-      where serial_number = (
-        select max(E1.serial_number)
-          from EQUIPMENT E1
-         where (E1.serial_number % 65536) = ?)")))
+                                        from EQUIPMENT
+                                        where serial_number = (
+                                                               select max(E1.serial_number)
+                                                               from EQUIPMENT E1
+                                                               where (E1.serial_number % 65536) = ?)")))
 
 ;; Get the EQUIPMENT.id for a serial number, SN, or #f if not found.
 (define (dev-id-from-sn db sn)
@@ -382,14 +474,14 @@
   (virtual-statement
    (lambda (dbsys)
      "insert into EQUIPMENT(device_name, manufacturer_id, device_id, serial_number)
-      values (?, ?, ?, ?)")))
+                                        values (?, ?, ?, ?)")))
 
 (define stmt-put-equipment-ver
   (virtual-statement
    (lambda (dbsys)
      "insert into EQUIPMENT_VER(equipment_id, timestamp, software_version,
-                                hardware_version, battery_voltage, battery_status)
-      values(?, ?, ?, ?, ?, ?)")))
+                                                hardware_version, battery_voltage, battery_status)
+                                        values(?, ?, ?, ?, ?, ?)")))
 
 (define stmt-check-equipment-use
   (virtual-statement
@@ -452,8 +544,8 @@
 (define  db-insert-activity-raw-data
   (let ((stmt (virtual-statement
                (lambda (dbsys)
-                "insert into ACTIVITY_RAW_DATA (activity_id, file_name, data)
-                 values(?, ?, ?)"))))
+                 "insert into ACTIVITY_RAW_DATA (activity_id, file_name, data)
+                                        values(?, ?, ?)"))))
     (lambda (activity-id file-name data db)
       (let ((in (open-input-bytes data))
             (out (open-output-bytes)))
@@ -481,8 +573,8 @@
           (raise (db-exn-activity-exists guid))))
       (let ((serial (dict-ref file-id 'serial-number #f)))
         (when serial
-          (let ((retired? (query-maybe-value 
-                           db 
+          (let ((retired? (query-maybe-value
+                           db
                            "select retired from EQUIPMENT where serial_number = ?"
                            serial)))
             (when (and retired? (> retired? 0))
@@ -495,31 +587,31 @@
   ;; escaped and transaction left open.
   (call-with-transaction
    db (lambda ()
-        (with-handlers 
-         ((db-exn-activity-exists? 
-           (lambda (e)
-             (let ((guid (db-exn-activity-exists-guid e)))
-               (cons 'already-exists guid))))
-          (db-exn-retired-device?
-           (lambda (e)
-             (let ((serial (db-exn-retired-device-serial e)))
-               (cons 'retired-device serial))))
-          ((lambda (e) (and (cons? e) (eq? (car e) 'fit-file-error)))
-           (lambda (e) (cons 'failed (cdr e))))
-          ((lambda (e) #t)
-           (lambda (e) (cons 'failed e))))
-         (let* ((fit-stream (make-fit-data-stream data))
-                (activity (let ((consumer (new db-fit-activity-builder% [db db])))
-                            (read-fit-records fit-stream consumer)
-                            (send consumer collect-activity)))
-                (aid (db-insert-activity activity db)))
-           (db-insert-activity-raw-data 
-            aid 
-            (if (path? file-name) (path->string file-name) file-name)
-            data
-            db)
-           (query-exec db "insert into LAST_IMPORT(activity_id) values (?)" aid)
-           (cons 'ok aid))))))
+        (with-handlers
+          ((db-exn-activity-exists?
+            (lambda (e)
+              (let ((guid (db-exn-activity-exists-guid e)))
+                (cons 'already-exists guid))))
+           (db-exn-retired-device?
+            (lambda (e)
+              (let ((serial (db-exn-retired-device-serial e)))
+                (cons 'retired-device serial))))
+           ((lambda (e) (and (cons? e) (eq? (car e) 'fit-file-error)))
+            (lambda (e) (cons 'failed (cdr e))))
+           ((lambda (e) #t)
+            (lambda (e) (cons 'failed e))))
+          (let* ((fit-stream (make-fit-data-stream data))
+                 (activity (let ((consumer (new db-fit-activity-builder% [db db])))
+                             (read-fit-records fit-stream consumer)
+                             (send consumer collect-activity)))
+                 (aid (db-insert-activity activity db)))
+            (db-insert-activity-raw-data
+             aid
+             (if (path? file-name) (path->string file-name) file-name)
+             data
+             db)
+            (query-exec db "insert into LAST_IMPORT(activity_id) values (?)" aid)
+            (cons 'ok aid))))))
 
 (define (db-import-activity-from-file file-name db)
   (let ((data (file->bytes file-name #:mode 'binary))
@@ -537,8 +629,8 @@
 
 (define (db-re-import-activity activity-id db)
   (let ((data (db-extract-activity-raw-data activity-id db))
-        (file-name (query-value 
-                    db "select file_name from ACTIVITY_RAW_DATA where activity_id = ?" 
+        (file-name (query-value
+                    db "select file_name from ACTIVITY_RAW_DATA where activity_id = ?"
                     activity-id)))
     (call-with-transaction
      db
@@ -551,13 +643,13 @@
     (call-with-output-file out-file-name
       (lambda (port)
         (write-bytes data port)))))
-  
+
 
 
 ;.................................................... db-fetch-activity ....
 
 (define (db-extract-activity-raw-data activity-id db)
-  (let ((data (query-maybe-value 
+  (let ((data (query-maybe-value
                db "select data from ACTIVITY_RAW_DATA where activity_id = ?"
                activity-id)))
     (if data
@@ -582,142 +674,142 @@
   (let ((stmt (virtual-statement
                (lambda (dbsys)
                  "select S.id,
-                         S.start_time,
-                         S.name,
-                         S.description,
-                         SS.total_timer_time,
-                         SS.total_elapsed_time,
-                         SS.total_distance,
-                         SS.total_calories,
-                         SS.avg_speed,
-                         SS.max_speed,
-                         SS.avg_heart_rate,
-                         SS.max_heart_rate,
-                         SS.avg_cadence,
-                         SS.max_cadence,
-                         SS.total_cycles,
-                         SS.avg_cycle_distance,
-                         SS.total_ascent,
-                         SS.total_descent,
-                         SS.swim_stroke_id,
-                         S.sport_id,
-                         S.sub_sport_id,
-                         S.pool_length,
-                         S.pool_length_unit,
-                         SS.avg_vertical_oscillation,
-                         SS.avg_stance_time,
-                         SS.avg_stance_time_percent,
-                         S.training_effect,
-                         SS.avg_power,
-                         SS.max_power,
-                         SS.normalized_power,
-                         SS.left_right_balance,
-                         SS.avg_left_torque_effectiveness,
-                         SS.avg_right_torque_effectiveness,
-                         SS.avg_left_pedal_smoothness,
-                         SS.avg_right_pedal_smoothness,
-                         S.training_stress_score,
-                         S.intensity_factor,
-                         S.rpe_scale,
-                         SS.avg_left_pco,
-                         SS.avg_right_pco,
-                         SS.avg_left_pp_start,
-                         SS.avg_left_pp_end,
-                         SS.avg_right_pp_start,
-                         SS.avg_right_pp_end,
-                         SS.avg_left_ppp_start,
-                         SS.avg_left_ppp_end,
-                         SS.avg_right_ppp_start,
-                         SS.avg_right_ppp_end,
-                         SS.aerobic_decoupling
-                    from A_SESSION S, SECTION_SUMMARY SS
-                   where S.summary_id = SS.id
-                     and S.activity_id = ?
-                   order by S.start_time"))))
+                                        S.start_time,
+                                        S.name,
+                                        S.description,
+                                        SS.total_timer_time,
+                                        SS.total_elapsed_time,
+                                        SS.total_distance,
+                                        SS.total_calories,
+                                        SS.avg_speed,
+                                        SS.max_speed,
+                                        SS.avg_heart_rate,
+                                        SS.max_heart_rate,
+                                        SS.avg_cadence,
+                                        SS.max_cadence,
+                                        SS.total_cycles,
+                                        SS.avg_cycle_distance,
+                                        SS.total_ascent,
+                                        SS.total_descent,
+                                        SS.swim_stroke_id,
+                                        S.sport_id,
+                                        S.sub_sport_id,
+                                        S.pool_length,
+                                        S.pool_length_unit,
+                                        SS.avg_vertical_oscillation,
+                                        SS.avg_stance_time,
+                                        SS.avg_stance_time_percent,
+                                        S.training_effect,
+                                        SS.avg_power,
+                                        SS.max_power,
+                                        SS.normalized_power,
+                                        SS.left_right_balance,
+                                        SS.avg_left_torque_effectiveness,
+                                        SS.avg_right_torque_effectiveness,
+                                        SS.avg_left_pedal_smoothness,
+                                        SS.avg_right_pedal_smoothness,
+                                        S.training_stress_score,
+                                        S.intensity_factor,
+                                        S.rpe_scale,
+                                        SS.avg_left_pco,
+                                        SS.avg_right_pco,
+                                        SS.avg_left_pp_start,
+                                        SS.avg_left_pp_end,
+                                        SS.avg_right_pp_start,
+                                        SS.avg_right_pp_end,
+                                        SS.avg_left_ppp_start,
+                                        SS.avg_left_ppp_end,
+                                        SS.avg_right_ppp_start,
+                                        SS.avg_right_ppp_end,
+                                        SS.aerobic_decoupling
+                                        from A_SESSION S, SECTION_SUMMARY SS
+                                        where S.summary_id = SS.id
+                                        and S.activity_id = ?
+                                        order by S.start_time"))))
     (lambda (activity-id db)
       (for/list ((session (in-list (query-rows db stmt activity-id))))
-                (db-extract-session session db)))))
+        (db-extract-session session db)))))
 
 (define fetch-session-stmt
   (virtual-statement
    (lambda (dbsys)
      "select S.id,
-            S.start_time,
-            S.name,
-            S.description,
-            SS.total_timer_time,
-            SS.total_elapsed_time,
-            SS.total_distance,
-            SS.total_calories,
-            SS.avg_speed,
-            SS.max_speed,
-            SS.avg_heart_rate,
-            SS.max_heart_rate,
-            SS.avg_cadence,
-            SS.max_cadence,
-            SS.total_cycles,
-            SS.avg_cycle_distance,
-            SS.total_ascent,
-            SS.total_descent,
-            SS.total_corrected_ascent,
-            SS.total_corrected_descent,
-            SS.swim_stroke_id,
-            S.sport_id,
-            S.sub_sport_id,
-            S.pool_length,
-            S.pool_length_unit,
-            SS.avg_vertical_oscillation,
-            SS.avg_stance_time,
-            SS.avg_stance_time_percent,
-            S.training_effect,
-            SS.avg_power,
-            SS.max_power,
-            SS.normalized_power,
-            SS.left_right_balance,
-            SS.avg_left_torque_effectiveness,
-            SS.avg_right_torque_effectiveness,
-            SS.avg_left_pedal_smoothness,
-            SS.avg_right_pedal_smoothness,
-            S.training_stress_score,
-            S.intensity_factor,
-            S.rpe_scale,
-            SS.avg_left_pco,
-            SS.avg_right_pco,
-            SS.avg_left_pp_start,
-            SS.avg_left_pp_end,
-            SS.avg_right_pp_start,
-            SS.avg_right_pp_end,
-            SS.avg_left_ppp_start,
-            SS.avg_left_ppp_end,
-            SS.avg_right_ppp_start,
-            SS.avg_right_ppp_end,
-            SS.aerobic_decoupling,
-            (select SH.sdnn
-               from SESSION_HRV SH
-               where SH.session_id = S.id) as hrv
-       from A_SESSION S, SECTION_SUMMARY SS
-      where S.summary_id = SS.id
-        and S.id = ?")))
+                                        S.start_time,
+                                        S.name,
+                                        S.description,
+                                        SS.total_timer_time,
+                                        SS.total_elapsed_time,
+                                        SS.total_distance,
+                                        SS.total_calories,
+                                        SS.avg_speed,
+                                        SS.max_speed,
+                                        SS.avg_heart_rate,
+                                        SS.max_heart_rate,
+                                        SS.avg_cadence,
+                                        SS.max_cadence,
+                                        SS.total_cycles,
+                                        SS.avg_cycle_distance,
+                                        SS.total_ascent,
+                                        SS.total_descent,
+                                        SS.total_corrected_ascent,
+                                        SS.total_corrected_descent,
+                                        SS.swim_stroke_id,
+                                        S.sport_id,
+                                        S.sub_sport_id,
+                                        S.pool_length,
+                                        S.pool_length_unit,
+                                        SS.avg_vertical_oscillation,
+                                        SS.avg_stance_time,
+                                        SS.avg_stance_time_percent,
+                                        S.training_effect,
+                                        SS.avg_power,
+                                        SS.max_power,
+                                        SS.normalized_power,
+                                        SS.left_right_balance,
+                                        SS.avg_left_torque_effectiveness,
+                                        SS.avg_right_torque_effectiveness,
+                                        SS.avg_left_pedal_smoothness,
+                                        SS.avg_right_pedal_smoothness,
+                                        S.training_stress_score,
+                                        S.intensity_factor,
+                                        S.rpe_scale,
+                                        SS.avg_left_pco,
+                                        SS.avg_right_pco,
+                                        SS.avg_left_pp_start,
+                                        SS.avg_left_pp_end,
+                                        SS.avg_right_pp_start,
+                                        SS.avg_right_pp_end,
+                                        SS.avg_left_ppp_start,
+                                        SS.avg_left_ppp_end,
+                                        SS.avg_right_ppp_start,
+                                        SS.avg_right_ppp_end,
+                                        SS.aerobic_decoupling,
+                                        (select SH.sdnn
+                                                from SESSION_HRV SH
+                                                where SH.session_id = S.id) as hrv
+                                        from A_SESSION S, SECTION_SUMMARY SS
+                                        where S.summary_id = SS.id
+                                        and S.id = ?")))
 
 (define (db-fetch-session session-id db)
   (db-extract-session (query-row db fetch-session-stmt session-id) db))
 
 (define (db-extract-session session-row db)
-  (let ((fields '(database-id start-time name description total-timer-time total-elapsed-time 
-                  total-distance total-calories avg-speed max-speed avg-heart-rate max-heart-rate
-                  avg-cadence max-cadence total-cycles avg-cycle-distance total-ascent total-descent
-                  total-corrected-ascent total-corrected-descent
-                  swim-stroke sport sub-sport pool-length pool-length-unit
-                  avg-vertical-oscillation avg-stance-time
-                  avg-stance-time-percent total-training-effect
-                  avg-power max-power normalized-power 
-                  left-right-balance 
-                  avg-left-torque-effectiveness avg-right-torque-effectiveness
-                  avg-left-pedal-smoothness avg-right-pedal-smoothness
-                  training-stress-score intensity-factor rpe-scale
-                  avg-left-pco avg-right-pco
-                  avg-left-pp-start avg-left-pp-end avg-right-pp-start avg-right-pp-end
-                  avg-left-ppp-start avg-left-ppp-end avg-right-ppp-start avg-right-ppp-end aerobic-decoupling hrv)))
+  (let ((fields '(database-id start-time name description total-timer-time total-elapsed-time
+                              total-distance total-calories avg-speed max-speed avg-heart-rate max-heart-rate
+                              avg-cadence max-cadence total-cycles avg-cycle-distance total-ascent total-descent
+                              total-corrected-ascent total-corrected-descent
+                              swim-stroke sport sub-sport pool-length pool-length-unit
+                              avg-vertical-oscillation avg-stance-time
+                              avg-stance-time-percent total-training-effect
+                              avg-power max-power normalized-power
+                              left-right-balance
+                              avg-left-torque-effectiveness avg-right-torque-effectiveness
+                              avg-left-pedal-smoothness avg-right-pedal-smoothness
+                              training-stress-score intensity-factor rpe-scale
+                              avg-left-pco avg-right-pco
+                              avg-left-pp-start avg-left-pp-end avg-right-pp-start avg-right-pp-end
+                              avg-left-ppp-start avg-left-ppp-end avg-right-ppp-start avg-right-ppp-end aerobic-decoupling hrv)))
     (let ((session-data (db-row->alist fields session-row)))
       (cons (cons 'weather (db-extract-weater-for-session (vector-ref session-row 0) db))
             (cons (cons 'laps (db-extract-laps-for-session (vector-ref session-row 0) db))
@@ -727,68 +819,68 @@
   (let ((stmt (virtual-statement
                (lambda (dbsys)
                  "select L.id,
-                         L.start_time,
-                         SS.total_timer_time,
-                         SS.total_elapsed_time,
-                         SS.total_distance,
-                         SS.total_calories,
-                         SS.avg_speed,
-                         SS.max_speed,
-                         SS.avg_heart_rate,
-                         SS.max_heart_rate,
-                         SS.avg_cadence,
-                         SS.max_cadence,
-                         SS.total_cycles,
-                         SS.avg_cycle_distance,
-                         SS.total_ascent,
-                         SS.total_descent,
-                         SS.total_corrected_ascent,
-                         SS.total_corrected_descent,
-                         SS.swim_stroke_id,
-                         SS.avg_vertical_oscillation,
-                         SS.avg_stance_time,
-                         SS.avg_stance_time_percent,
-                         SS.avg_power,
-                         SS.max_power,
-                         SS.normalized_power,
-                         SS.left_right_balance,
-                         SS.avg_left_torque_effectiveness,
-                         SS.avg_right_torque_effectiveness,
-                         SS.avg_left_pedal_smoothness,
-                         SS.avg_right_pedal_smoothness,
-                         SS.avg_left_pco,
-                         SS.avg_right_pco,
-                         SS.avg_left_pp_start,
-                         SS.avg_left_pp_end,
-                         SS.avg_right_pp_start,
-                         SS.avg_right_pp_end,
-                         SS.avg_left_ppp_start,
-                         SS.avg_left_ppp_end,
-                         SS.avg_right_ppp_start,
-                         SS.avg_right_ppp_end,
-                         SS.aerobic_decoupling
-                    from A_LAP L, SECTION_SUMMARY SS
-                   where L.summary_id = SS.id
-                     and L.session_id = ?
-                  order by L.start_time"))))
+                                        L.start_time,
+                                        SS.total_timer_time,
+                                        SS.total_elapsed_time,
+                                        SS.total_distance,
+                                        SS.total_calories,
+                                        SS.avg_speed,
+                                        SS.max_speed,
+                                        SS.avg_heart_rate,
+                                        SS.max_heart_rate,
+                                        SS.avg_cadence,
+                                        SS.max_cadence,
+                                        SS.total_cycles,
+                                        SS.avg_cycle_distance,
+                                        SS.total_ascent,
+                                        SS.total_descent,
+                                        SS.total_corrected_ascent,
+                                        SS.total_corrected_descent,
+                                        SS.swim_stroke_id,
+                                        SS.avg_vertical_oscillation,
+                                        SS.avg_stance_time,
+                                        SS.avg_stance_time_percent,
+                                        SS.avg_power,
+                                        SS.max_power,
+                                        SS.normalized_power,
+                                        SS.left_right_balance,
+                                        SS.avg_left_torque_effectiveness,
+                                        SS.avg_right_torque_effectiveness,
+                                        SS.avg_left_pedal_smoothness,
+                                        SS.avg_right_pedal_smoothness,
+                                        SS.avg_left_pco,
+                                        SS.avg_right_pco,
+                                        SS.avg_left_pp_start,
+                                        SS.avg_left_pp_end,
+                                        SS.avg_right_pp_start,
+                                        SS.avg_right_pp_end,
+                                        SS.avg_left_ppp_start,
+                                        SS.avg_left_ppp_end,
+                                        SS.avg_right_ppp_start,
+                                        SS.avg_right_ppp_end,
+                                        SS.aerobic_decoupling
+                                        from A_LAP L, SECTION_SUMMARY SS
+                                        where L.summary_id = SS.id
+                                        and L.session_id = ?
+                                        order by L.start_time"))))
     (lambda (session-id db)
       (for/list ((lap (in-list (query-rows db stmt session-id))))
-                (db-extract-lap lap db)))))
+        (db-extract-lap lap db)))))
 
 (define (db-extract-lap lap-row db)
-  (let ((fields '(database-id start-time total-timer-time total-elapsed-time 
-                  total-distance total-calories avg-speed max-speed avg-heart-rate max-heart-rate
-                  avg-cadence max-cadence total-cycles avg-cycle-distance total-ascent total-descent
-                  total-corrected-ascent total-corrected-descent
-                  swim-stroke avg-vertical-oscillation avg-stance-time
-                  avg-stance-time-percent
-                  avg-power max-power normalized-power
-                  left-right-balance
-                  avg-left-torque-effectiveness avg-right-torque-effectiveness
-                  avg-left-pedal-smoothness avg-right-pedal-smoothness
-                  avg-left-pco avg-right-pco
-                  avg-left-pp-start avg-left-pp-end avg-right-pp-start avg-right-pp-end
-                  avg-left-ppp-start avg-left-ppp-end avg-right-ppp-start avg-right-ppp-end aerobic-decoupling)))
+  (let ((fields '(database-id start-time total-timer-time total-elapsed-time
+                              total-distance total-calories avg-speed max-speed avg-heart-rate max-heart-rate
+                              avg-cadence max-cadence total-cycles avg-cycle-distance total-ascent total-descent
+                              total-corrected-ascent total-corrected-descent
+                              swim-stroke avg-vertical-oscillation avg-stance-time
+                              avg-stance-time-percent
+                              avg-power max-power normalized-power
+                              left-right-balance
+                              avg-left-torque-effectiveness avg-right-torque-effectiveness
+                              avg-left-pedal-smoothness avg-right-pedal-smoothness
+                              avg-left-pco avg-right-pco
+                              avg-left-pp-start avg-left-pp-end avg-right-pp-start avg-right-pp-end
+                              avg-left-ppp-start avg-left-ppp-end avg-right-ppp-start avg-right-ppp-end aerobic-decoupling)))
 
     (let ((lap-data (db-row->alist fields lap-row)))
       (cons (cons 'lengths (db-extract-lengths-for-lap (vector-ref lap-row 0) db))
@@ -798,66 +890,66 @@
   (let ((stmt (virtual-statement
                (lambda (dbsys)
                  "select L.id,
-                         L.start_time,
-                         SS.total_timer_time,
-                         SS.total_elapsed_time,
-                         SS.total_distance,
-                         SS.total_calories,
-                         SS.avg_speed,
-                         SS.max_speed,
-                         SS.avg_heart_rate,
-                         SS.max_heart_rate,
-                         SS.avg_cadence,
-                         SS.max_cadence,
-                         SS.total_cycles,
-                         SS.avg_cycle_distance,
-                         SS.total_ascent,
-                         SS.total_descent,
-                         SS.total_corrected_ascent,
-                         SS.total_corrected_descent,
-                         SS.swim_stroke_id,
-                         SS.avg_vertical_oscillation,
-                         SS.avg_stance_time,
-                         SS.avg_stance_time_percent,
-                         SS.avg_power,
-                         SS.max_power,
-                         SS.normalized_power,
-                         SS.left_right_balance,
-                         SS.avg_left_torque_effectiveness,
-                         SS.avg_right_torque_effectiveness,
-                         SS.avg_left_pedal_smoothness,
-                         SS.avg_right_pedal_smoothness,
-                         SS.avg_left_pco,
-                         SS.avg_right_pco,
-                         SS.avg_left_pp_start,
-                         SS.avg_left_pp_end,
-                         SS.avg_right_pp_start,
-                         SS.avg_right_pp_end,
-                         SS.avg_left_ppp_start,
-                         SS.avg_left_ppp_end,
-                         SS.avg_right_ppp_start,
-                         SS.avg_right_ppp_end
-                    from A_LENGTH L, SECTION_SUMMARY SS
-                   where L.summary_id = SS.id
-                     and L.lap_id = ?
-                   order by L.start_time"))))
+                                        L.start_time,
+                                        SS.total_timer_time,
+                                        SS.total_elapsed_time,
+                                        SS.total_distance,
+                                        SS.total_calories,
+                                        SS.avg_speed,
+                                        SS.max_speed,
+                                        SS.avg_heart_rate,
+                                        SS.max_heart_rate,
+                                        SS.avg_cadence,
+                                        SS.max_cadence,
+                                        SS.total_cycles,
+                                        SS.avg_cycle_distance,
+                                        SS.total_ascent,
+                                        SS.total_descent,
+                                        SS.total_corrected_ascent,
+                                        SS.total_corrected_descent,
+                                        SS.swim_stroke_id,
+                                        SS.avg_vertical_oscillation,
+                                        SS.avg_stance_time,
+                                        SS.avg_stance_time_percent,
+                                        SS.avg_power,
+                                        SS.max_power,
+                                        SS.normalized_power,
+                                        SS.left_right_balance,
+                                        SS.avg_left_torque_effectiveness,
+                                        SS.avg_right_torque_effectiveness,
+                                        SS.avg_left_pedal_smoothness,
+                                        SS.avg_right_pedal_smoothness,
+                                        SS.avg_left_pco,
+                                        SS.avg_right_pco,
+                                        SS.avg_left_pp_start,
+                                        SS.avg_left_pp_end,
+                                        SS.avg_right_pp_start,
+                                        SS.avg_right_pp_end,
+                                        SS.avg_left_ppp_start,
+                                        SS.avg_left_ppp_end,
+                                        SS.avg_right_ppp_start,
+                                        SS.avg_right_ppp_end
+                                        from A_LENGTH L, SECTION_SUMMARY SS
+                                        where L.summary_id = SS.id
+                                        and L.lap_id = ?
+                                        order by L.start_time"))))
     (lambda (lap-id db)
       (for/list ((length (in-list (query-rows db stmt lap-id))))
-                (db-extract-length length db)))))
+        (db-extract-length length db)))))
 
 (define (db-extract-length length-row db)
-  (let ((fields '(database-id start-time total-timer-time total-elapsed-time 
-                  total-distance total-calories avg-speed max-speed avg-heart-rate max-heart-rate
-                  avg-cadence max-cadence total-cycles avg-cycle-distance total-ascent total-descent
-                  total-corrected-ascent total-corrected-descent
-                  swim-stroke avg-vertical-oscillation avg-stance-time
-                  avg-stance-time-percent
-                  avg-power max-power normalized-power
-                  avg-left-torque-effectiveness avg-right-torque-effectiveness
-                  avg-left-pedal-smoothness avg-right-pedal-smoothness
-                  avg-left-pco avg-right-pco
-                  avg-left-pp-start avg-left-pp-end avg-right-pp-start avg-right-pp-end
-                  avg-left-ppp-start avg-left-ppp-end avg-right-ppp-start avg-right-ppp-end)))
+  (let ((fields '(database-id start-time total-timer-time total-elapsed-time
+                              total-distance total-calories avg-speed max-speed avg-heart-rate max-heart-rate
+                              avg-cadence max-cadence total-cycles avg-cycle-distance total-ascent total-descent
+                              total-corrected-ascent total-corrected-descent
+                              swim-stroke avg-vertical-oscillation avg-stance-time
+                              avg-stance-time-percent
+                              avg-power max-power normalized-power
+                              avg-left-torque-effectiveness avg-right-torque-effectiveness
+                              avg-left-pedal-smoothness avg-right-pedal-smoothness
+                              avg-left-pco avg-right-pco
+                              avg-left-pp-start avg-left-pp-end avg-right-pp-start avg-right-pp-end
+                              avg-left-ppp-start avg-left-ppp-end avg-right-ppp-start avg-right-ppp-end)))
 
     (let ((length-data (db-row->alist fields length-row)))
       (cons (cons 'track ;(db-extract-trackpoints-for-length (vector-ref length-row 0) db)
@@ -869,46 +961,46 @@
   (let ((stmt (virtual-statement
                (lambda (dbsys)
                  "select T.id,
-                         T.timestamp,
-                         T.position_lat,
-                         T.position_long,
-                         T.altitude,
-                         T.corrected_altitude,
-                         T.distance,
-                         T.cadence,
-                         T.speed,
-                         T.heart_rate,
-                         T.vertical_oscillation,
-                         T.stance_time,
-                         T.stance_time_percent,
-                         T.power,
-                         T.accumulated_power,
-                         T.left_right_balance,
-                         T.left_torque_effectiveness,
-                         T.right_torque_effectiveness,
-                         T.left_pedal_smoothness,
-                         T.right_pedal_smoothness,
-                         T.left_pco,
-                         T.right_pco,
-                         T.left_pp_start,
-                         T.left_pp_end,
-                         T.right_pp_start,
-                         T.right_pp_end,
-                         T.left_ppp_start,
-                         T.left_ppp_end,
-                         T.right_ppp_start,
-                         T.right_ppp_end
-                    from A_TRACKPOINT T
-                   where T.length_id = ?
-                   order by T.timestamp"))))
+                                        T.timestamp,
+                                        T.position_lat,
+                                        T.position_long,
+                                        T.altitude,
+                                        T.corrected_altitude,
+                                        T.distance,
+                                        T.cadence,
+                                        T.speed,
+                                        T.heart_rate,
+                                        T.vertical_oscillation,
+                                        T.stance_time,
+                                        T.stance_time_percent,
+                                        T.power,
+                                        T.accumulated_power,
+                                        T.left_right_balance,
+                                        T.left_torque_effectiveness,
+                                        T.right_torque_effectiveness,
+                                        T.left_pedal_smoothness,
+                                        T.right_pedal_smoothness,
+                                        T.left_pco,
+                                        T.right_pco,
+                                        T.left_pp_start,
+                                        T.left_pp_end,
+                                        T.right_pp_start,
+                                        T.right_pp_end,
+                                        T.left_ppp_start,
+                                        T.left_ppp_end,
+                                        T.right_ppp_start,
+                                        T.right_ppp_end
+                                        from A_TRACKPOINT T
+                                        where T.length_id = ?
+                                        order by T.timestamp"))))
     (lambda (length-id db)
       (for/list ((trackpoint (in-list (query-rows db stmt length-id))))
-                (db-extract-trackpoint trackpoint)))))
+        (db-extract-trackpoint trackpoint)))))
 
 (define (db-extract-trackpoint trackpoint-row)
-  (let ((fields '(database-id timestamp position-lat position-long 
-                              altitude corrected-altitude distance cadence speed 
-                              heart-rate vertical-oscillation 
+  (let ((fields '(database-id timestamp position-lat position-long
+                              altitude corrected-altitude distance cadence speed
+                              heart-rate vertical-oscillation
                               stance-time stance-time-percent
                               power accumulated-power left-right-balance
                               left-torque-effectiveness right-torque-effectiveness
@@ -921,16 +1013,16 @@
 (define db-extract-weater-for-session
   (let ((stmt (virtual-statement
                (lambda (dbsys)
-                 "select id, wstation, temperature, dew_point, humidity, 
-                         wind_speed, wind_gusts, wind_direction, pressure
-                  from SESSION_WEATHER
-                  where session_id = ?"))))
+                 "select id, wstation, temperature, dew_point, humidity,
+                                        wind_speed, wind_gusts, wind_direction, pressure
+                                        from SESSION_WEATHER
+                                        where session_id = ?"))))
     (lambda (session-id db)
-      (let ((fields '(database-id source temperature dew-point humidity 
+      (let ((fields '(database-id source temperature dew-point humidity
                                   wind-speed wind-gusts wind-direction pressure))
             (row (query-maybe-row db stmt session-id)))
         (if row (db-row->alist fields row) '())))))
-    
+
 
 
 ;................................................... db-delete-sesssion ....
@@ -954,16 +1046,16 @@
         (del-section-summary
          (virtual-statement
           (lambda (dbsys) "delete from SECTION_SUMMARY where id in (
-                             select summary_id from A_SESSION where id = ?)")))
+                                                                      select summary_id from A_SESSION where id = ?)")))
         (del-trackpoints
          (virtual-statement
           (lambda (dbsys) "delete from A_TRACKPOINT where length_id in (
-                             select id from A_LENGTH where lap_id in (
-                               select id from A_LAP where session_id = ?))")))
+                                                                          select id from A_LENGTH where lap_id in (
+                                                                                                                   select id from A_LAP where session_id = ?))")))
         (del-lengths
          (virtual-statement
           (lambda (dbsys) "delete from A_LENGTH where lap_id in (
-                             select id from A_LAP where session_id = ?)")))
+                                                                   select id from A_LAP where session_id = ?)")))
         (del-laps
          (virtual-statement
           (lambda (dbsys) "delete from A_LAP where session_id = ?")))
@@ -1000,24 +1092,24 @@
 ;; longer show up in any reports and won't be imported again when scannig
 ;; folders for FIT files.  The activtiy can be re-imported from data in
 ;; ACTIVTIY_RAW_DATA, if needed.
-(define db-delete-activity 
+(define db-delete-activity
   (let ((stmt (virtual-statement
                (lambda (dbsys)
                  "select S.id from A_SESSION S where S.activity_id = ?"))))
-  (lambda (activity-id db)
-    (call-with-transaction
-     db (lambda ()
-          (map (lambda (session-id)
-                 (db-delete-session session-id db))
-               (query-list db stmt activity-id))
-          #t)))))
+    (lambda (activity-id db)
+      (call-with-transaction
+       db (lambda ()
+            (map (lambda (session-id)
+                   (db-delete-session session-id db))
+                 (query-list db stmt activity-id))
+            #t)))))
 
 ;; Really delete the activtiy from the database.  All data for this activity
 ;; is lost.  It will be however be re-imported if the FIT file is seen again
 ;; by `db-import-activities-from-directory'
 (define db-delete-activity-hard
   (let ((del-activtiy
-         (virtual-statement 
+         (virtual-statement
           (lambda (dbsys) "delete from ACTIVITY where id = ?")))
         (del-last-import
          (virtual-statement
@@ -1029,7 +1121,7 @@
          (virtual-statement
           (lambda (dbsys) "select id from A_SESSION where activity_id = ?"))))
     (lambda (activity-id db)
-      (call-with-transaction 
+      (call-with-transaction
        db (lambda ()
             (let ((sessions (query-list db sel-sessions activity-id)))
               (for-each (lambda (session) (db-delete-session session db)) sessions))

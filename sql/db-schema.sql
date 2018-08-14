@@ -1,7 +1,7 @@
 -- db-schema.sql -- database schema for ActivityLog2
 --
 -- This file is part of ActivityLog2, an fitness activity tracker
--- Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+-- Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 --
 -- This program is free software: you can redistribute it and/or modify it
 -- under the terms of the GNU General Public License as published by the Free
@@ -24,7 +24,7 @@ create table E_SPORT (
   name text unique not null,
   color integer not null, -- not used by the application anymore
   icon string not null    -- a predefined icon name
-  );
+);
 
 insert into E_SPORT(id, name, color, icon) values(0, 'Generic', -1, '');
 insert into E_SPORT(id, name, color, icon) values(1, 'Running', 1, 'run');
@@ -112,7 +112,7 @@ create table ACTIVITY (
   -- creators serial number + creation time.  This allows us to avoid
   -- re-importing activities.
   guid text
-  );
+);
 
 create index IX0_ACTIVITY on ACTIVITY(start_time);
 create unique index IX1_ACTIVITY on ACTIVITY(guid);
@@ -193,7 +193,7 @@ create table SECTION_SUMMARY (
   avg_right_ppp_end real,
 
   foreign key (swim_stroke_id) references E_SWIM_STROKE(id)
-  );
+);
 
 create index IX0_SECTION_SUMMARY on SECTION_SUMMARY(id);
 
@@ -222,7 +222,7 @@ create table A_SESSION (
   foreign key (sport_id) references E_SPORT(id),
   foreign key (sub_sport_id) references E_SUB_SPORT(id),
   foreign key (summary_id) references SECTION_SUMMARY(id) on delete set null
-  );
+);
 
 create index IX0_A_SESSION on A_SESSION(activity_id);
 create index IX1_A_SESSION on A_SESSION(start_time);
@@ -238,7 +238,7 @@ create table A_LAP (
 
   foreign key (session_id) references A_SESSION(id),
   foreign key (summary_id) references SECTION_SUMMARY(id) on delete set null
-  );
+);
 
 create index IX0_A_LAP on A_LAP(session_id);
 
@@ -254,7 +254,7 @@ create table A_LENGTH (
 
   foreign key (lap_id) references A_LAP(id),
   foreign key (summary_id) references SECTION_SUMMARY(id) on delete set null
-  );
+);
 
 create index IX0_A_LENGTH on A_LENGTH(lap_id);
 
@@ -304,7 +304,7 @@ create table A_TRACKPOINT (
   tile_code integer,                    -- see elevation-correction.rkt
 
   foreign key (length_id) references A_LENGTH(id)
-  );
+);
 
 create index IX0_A_TRACKPOINT on A_TRACKPOINT(length_id);
 
@@ -314,6 +314,80 @@ create index IX0_A_TRACKPOINT on A_TRACKPOINT(length_id);
 -- larger index size.
 create index IX1_A_TRACKPOINT
   on A_TRACKPOINT(tile_code, position_lat, position_long, altitude);
+
+
+--............................................................... Xdata ....
+
+-- Garmin allows third party applications to run on their devices and record
+-- extra bits of data.  Each application will have an entry in this table,
+-- created when we first encounter an application in a FIT file.  Technically,
+-- a third party application is identified by a 16 byte developer id and a 16
+-- byte application id, but in all the files that I have seen, the developer
+-- id is set to FF, so the application id uniquely identifies a third party
+-- application in the Garmin world.
+--
+-- The application name is not recorded in the FIT file, so it will have to be
+-- set by the user.
+create table XDATA_APP (
+  id integer not null primary key autoincrement,
+  app_guid text unique not null,
+  dev_guid text,
+  name text                             -- e.g. 'Stryd', 'Outdoor Sports +'
+);
+
+create index IX0_XDATA_APP on XDATA_APP(app_guid);
+
+-- Each XDATA application can define one or more fields in which it records
+-- data.  We list them here.  Fields have an unique name withing an
+-- application GUID, but not necessarily with other applications.
+create table XDATA_FIELD (
+  id integer not null primary key autoincrement,
+  app_id integer not null,
+  name text not null,
+  unit_name text,
+  -- the native message where this field can appear.  We are mostly interested
+  -- here in message 20, which is a data record.
+  native_message integer,
+  -- the native field for which this field corresponds, for example a running
+  -- power application might indicate that this is a "power"(7) field. This
+  -- can be NULL, indicating that the developer field does not correspond to
+  -- any native field.
+  native_field integer,
+  foreign key (app_id) references XDATA_APP(id)
+);
+
+create unique index IX0_XDATA_FIELD on XDATA_FIELD(app_id, name);
+
+-- An XDATA value attached to a track point record.
+create table XDATA_VALUE (
+  id integer not null primary key autoincrement,
+  trackpoint_id integer not null,
+  field_id integer not null,
+  val real,
+  foreign key (field_id) references XDATA_FIELD(id),
+  foreign key (trackpoint_id) references A_TRACKPOINT(id) on delete cascade
+);
+
+-- Add the 'val' option to this index, to make it a covering index when we use
+-- the query to fetch values for a sessions track points.  This will
+-- effectively double the data storage needed for the XDATA_VALUE table, but
+-- it is already almost double even if we leave 'val' out.  Also, I am happy
+-- to trade off disk space for speed.
+create index IX0_XDATA_VALUE on XDATA_VALUE(trackpoint_id, field_id, val);
+
+-- A summary XDATA value (representing XDATA values added to sessions, laps
+-- and lengths).  It is attached to a SECTION_SUMMARY row, which in turn is
+-- referenced by a A_SESSION, A_LAP or A_LENGTH row.
+create table XDATA_SUMMARY_VALUE (
+  id integer not null primary key autoincrement,
+  summary_id integer not null,
+  field_id integer not null,
+  val real,
+  foreign key (field_id) references XDATA_FIELD(id),
+  foreign key (summary_id) references SECTION_SUMMARY(id) on delete cascade
+);
+
+create index IX0_XDATA_SUMMARY_VALUE on XDATA_SUMMARY_VALUE(summary_id, field_id);
 
 
 --......................................................... Sport Zones ....
@@ -344,7 +418,7 @@ create table SPORT_ZONE (
   foreign key (sport_id) references E_SPORT(id),
   foreign key (sub_sport_id) references E_SUB_SPORT(id),
   foreign key (zone_metric_id) references E_ZONE_METRIC(id)
-  );
+);
 
 create unique index IX0_SPORT_ZONE
   on SPORT_ZONE(sport_id, sub_sport_id, zone_metric_id, valid_from);
@@ -454,7 +528,7 @@ create table CRITICAL_POWER (
   cp real not null, -- critical power (watts), or cricital velocity (m/s)
   wprime real not null, -- anaerobic work capacity (W' in joules, or D' in meters)
   tau real   -- wprime reconstitution time constant, see doc/critical-power.md
-  );
+);
 
 create unique index IX0_CRITICAL_POWER
   on SPORT_ZONE(sport_id, sub_sport_id, valid_from);
@@ -541,7 +615,7 @@ create table SESSION_HRV (
   good_samples integer not null,        -- # of samples where good-hrv? is #t
   bad_samples integer not null,         -- # of samples where good-hrv? is #f
   foreign key (session_id) references A_SESSION(id) on delete cascade
-  );
+);
 
 create unique index IX0_SESSION_HRV on SESSION_HRV(session_id);
 
@@ -561,7 +635,7 @@ create table SESSION_WEATHER (
   wind_direction real,              -- degrees 0 - N, 90 - E, 180 - S, 270 - W
   pressure real,
   foreign key (session_id) references A_SESSION(id) on delete cascade
-  );
+);
 
 create index IX0_SESSION_WEATHER on SESSION_WEATHER(session_id);
 
@@ -611,14 +685,14 @@ create table EQUIPMENT_VER (
   battery_status integer,
   foreign key (equipment_id) references EQUIPMENT(id) on delete cascade,
   foreign key (battery_status) references E_BATTERY_STATUS(id)
-  );
+);
 
 create table EQUIPMENT_USE (
   equipment_id integer not null,
   session_id integer not null,
   foreign key (equipment_id) references EQUIPMENT(id),
   foreign key (session_id) references A_SESSION(id)
-  );
+);
 
 create index IX0_EQIPMENT_USE on EQUIPMENT_USE(equipment_id, session_id);
 create unique index IX1_EQIPMENT_USE on EQUIPMENT_USE(session_id, equipment_id);
@@ -646,51 +720,51 @@ create table EQUIPMENT_SERVICE_LOG (
   target integer not null,
   foreign key (equipment_id) references EQUIPMENT(id) on delete cascade,
   foreign key (service_type) references E_SERVICE_TYPE(id)
-  );
+);
 
 create index IX0_EQIPMENT_SERVICE_LOG on EQUIPMENT_SERVICE_LOG(equipment_id);
 
 -- View that determines usage level for each piece of equipment.  Note that
 -- equipment which has no sessions referenced will not be listed here.
 create view V_EQUIPMENT_USE as
-select EU.equipment_id as equipment_id,
-       ifnull(count(EU.session_id), 0) as use_count,
-       ifnull(sum(SS.total_timer_time), 0) as hours_used,
-       ifnull(sum(SS.total_distance), 0) as kms_used,
-       ifnull(min(S.start_time), 0) as first_use,
-       ifnull(max(S.start_time), 0) as last_use
-  from EQUIPMENT_USE EU,
-       A_SESSION S,
-       SECTION_SUMMARY SS
- where EU.session_id = S.id
-   and S.summary_id = SS.id
- group by EU.equipment_id;
+  select EU.equipment_id as equipment_id,
+         ifnull(count(EU.session_id), 0) as use_count,
+         ifnull(sum(SS.total_timer_time), 0) as hours_used,
+         ifnull(sum(SS.total_distance), 0) as kms_used,
+         ifnull(min(S.start_time), 0) as first_use,
+         ifnull(max(S.start_time), 0) as last_use
+    from EQUIPMENT_USE EU,
+         A_SESSION S,
+         SECTION_SUMMARY SS
+   where EU.session_id = S.id
+     and S.summary_id = SS.id
+   group by EU.equipment_id;
 
 
 -- View that contains the current usage count for service log entries.  Note
 -- that completed entries (the ones that have a non-null end_date) only count
 -- up to that date.
 create view V_EQUIPMENT_SLOG_CURRENT as
-select ESL.id as service_log_id,
-       round(case ESL.service_type
-       when 0 then (select total(SS1.total_timer_time)
-                      from EQUIPMENT_USE EU1, A_SESSION S1, SECTION_SUMMARY SS1
-                     where ESL.equipment_id = EU1.equipment_id
-                       and EU1.session_id = S1.id
-                       and S1.summary_id = SS1.id
-                       and S1.start_time > ESL.start_date
-                       and S1.start_time < ifnull(ESL.end_date, 3600 + strftime('%s','now')))
-       when 1 then (select total(SS2.total_distance)
-                      from EQUIPMENT_USE EU2, A_SESSION S2, SECTION_SUMMARY SS2
-                     where ESL.equipment_id = EU2.equipment_id
-                       and EU2.session_id = S2.id
-                       and S2.summary_id = SS2.id
-                       and S2.start_time > ESL.start_date
-                       and S2.start_time < ifnull(ESL.end_date, 3600 + strftime('%s','now')))
-       when 2 then ((ifnull(ESL.end_date, strftime('%s','now')) - ESL.start_date) / (24 * 3600))
-       else null end) as current
-  from EQUIPMENT_SERVICE_LOG ESL, E_SERVICE_TYPE EST
- where ESL.service_type = EST.id;
+  select ESL.id as service_log_id,
+         round(case ESL.service_type
+               when 0 then (select total(SS1.total_timer_time)
+                              from EQUIPMENT_USE EU1, A_SESSION S1, SECTION_SUMMARY SS1
+                             where ESL.equipment_id = EU1.equipment_id
+                               and EU1.session_id = S1.id
+                               and S1.summary_id = SS1.id
+                               and S1.start_time > ESL.start_date
+                               and S1.start_time < ifnull(ESL.end_date, 3600 + strftime('%s','now')))
+               when 1 then (select total(SS2.total_distance)
+                              from EQUIPMENT_USE EU2, A_SESSION S2, SECTION_SUMMARY SS2
+                             where ESL.equipment_id = EU2.equipment_id
+                               and EU2.session_id = S2.id
+                               and S2.summary_id = SS2.id
+                               and S2.start_time > ESL.start_date
+                               and S2.start_time < ifnull(ESL.end_date, 3600 + strftime('%s','now')))
+               when 2 then ((ifnull(ESL.end_date, strftime('%s','now')) - ESL.start_date) / (24 * 3600))
+               else null end) as current
+    from EQUIPMENT_SERVICE_LOG ESL, E_SERVICE_TYPE EST
+   where ESL.service_type = EST.id;
 
 
 --..................................................... Athlete Metrics ....
@@ -698,7 +772,7 @@ select ESL.id as service_log_id,
 create table E_SLEEP_QUALITY (
   id integer not null primary key autoincrement,
   name text unique not null
-  );
+);
 
 insert into E_SLEEP_QUALITY(id, name) values(0, 'Bad');
 insert into E_SLEEP_QUALITY(id, name) values(1, 'Average');
@@ -707,7 +781,7 @@ insert into E_SLEEP_QUALITY(id, name) values(2, 'Good');
 create table E_OVERALL_FEELING (
   id integer not null primary key autoincrement,
   name text unique not null
-  );
+);
 
 insert into E_OVERALL_FEELING(id, name) values(0, 'Bad');
 insert into E_OVERALL_FEELING(id, name) values(1, 'Below average');
@@ -725,7 +799,7 @@ create table ATHLETE_METRICS (
   description text,
   foreign key (sleep_quality) references E_SLEEP_QUALITY(id),
   foreign key (overall_feeling) references E_OVERALL_FEELING(id)
-  );
+);
 
 create index IX0_ATHLETE_METRICS on ATHLETE_METRICS(timestamp);
 
@@ -841,9 +915,9 @@ create table ATHLETE (
   -- NOTE: the parameters below are changing over time, but we don't record
   -- that.  We only record the 'current' value.
 
-  ftp integer,                          -- Functional Threshol Power (watts)
-  swim_tpace integer                    -- Swim Threshold Pace (meters / sec)
-  );
+ftp integer,                          -- Functional Threshol Power (watts)
+swim_tpace integer                    -- Swim Threshold Pace (meters / sec)
+);
 
 -- Insert the only row in the ATHLETE table now.  It will only need to be
 -- udpated from now on.
@@ -879,7 +953,7 @@ create table BAVG_CACHE (
   series text not null,           -- data series name from session data-frame%
   data blob not null,             -- GZIP-ped JSON object containing the data
   foreign key(session_id) references A_SESSION(id)
-  );
+);
 
 -- this index is written such that it can be used to look up entries both by
 -- series only and by session id + series.
@@ -892,7 +966,7 @@ create table HIST_CACHE (
   series text not null,
   data blob not null,
   foreign key(session_id) references A_SESSION(id)
-  );
+);
 
 -- this index is written such that it can be used to look up entries both by
 -- series only and by session id + series.
@@ -906,7 +980,7 @@ create table SCATTER_CACHE (
   series2 text not null,
   data blob not null,
   foreign key(session_id) references A_SESSION(id)
-  );
+);
 
 -- this index is written such that it can be used to look up entries both by
 -- series1 only and by session id + series1 + series2.
@@ -921,33 +995,33 @@ create index IX1_SCATTER_CACHE on SCATTER_CACHE(series2);
 -- into swim/bike/run/strength training colums.  This view is used by the
 -- "Triathlon Trainig Volume" reports.
 create view V_TRIATHLON_SESSIONS as
-select S.id as session_id,
-       S.start_time as start_time,
-       S.sport_id as sport_id,
-       S.sub_sport_id as sub_sport_id,
-       (case S.sport_id when 1 then 1 else 0 end) as run_count,
-       (case S.sport_id when 1 then SS.total_distance else 0 end) as run_distance,
-       (case S.sport_id when 1 then SS.total_timer_time else 0 end) as run_time,
-       (case S.sport_id when 1 then S.training_stress_score else 0 end) as run_effort,
-       (case S.sport_id when 2 then 1 else 0 end) as bike_count,
-       (case S.sport_id when 2 then SS.total_distance else 0 end) as bike_distance,
-       (case S.sport_id when 2 then SS.total_timer_time else 0 end) as bike_time,
-       (case S.sport_id when 2 then S.training_stress_score else 0 end) as bike_effort,
-       (case S.sport_id when 5 then 1 else 0 end) as swim_count,
-       (case S.sport_id when 5 then SS.total_distance else 0 end) as swim_distance,
-       (case S.sport_id when 5 then SS.total_timer_time else 0 end) as swim_time,
-       (case S.sport_id when 5 then S.training_stress_score else 0 end) as swim_effort,
-       (case S.sport_id when 4 then (case S.sub_sport_id when 20 then 1 else 0 end) else 0 end) as strength_count,
-       (case S.sport_id when 4 then (case S.sub_sport_id when 20 then SS.total_distance else 0 end) else 0 end) as strength_distance,
-       (case S.sport_id when 4 then (case S.sub_sport_id when 20 then SS.total_timer_time else 0 end) else 0 end) as strength_time,
-       (case S.sport_id when 4 then (case S.sub_sport_id when 20 then S.training_stress_score else 0 end) else 0 end) as strength_effort,
-       1 as sport_count,
-       SS.total_distance as sport_distance,
-       SS.total_timer_time as sport_time,
-       S.training_stress_score as effort
-  from A_SESSION S, SECTION_SUMMARY SS
- where S.summary_id = SS.id
-   and (S.sport_id in (1, 2, 5) or (S.sport_id = 4 and S.sub_sport_id = 20));
+  select S.id as session_id,
+         S.start_time as start_time,
+         S.sport_id as sport_id,
+         S.sub_sport_id as sub_sport_id,
+         (case S.sport_id when 1 then 1 else 0 end) as run_count,
+         (case S.sport_id when 1 then SS.total_distance else 0 end) as run_distance,
+         (case S.sport_id when 1 then SS.total_timer_time else 0 end) as run_time,
+         (case S.sport_id when 1 then S.training_stress_score else 0 end) as run_effort,
+         (case S.sport_id when 2 then 1 else 0 end) as bike_count,
+         (case S.sport_id when 2 then SS.total_distance else 0 end) as bike_distance,
+         (case S.sport_id when 2 then SS.total_timer_time else 0 end) as bike_time,
+         (case S.sport_id when 2 then S.training_stress_score else 0 end) as bike_effort,
+         (case S.sport_id when 5 then 1 else 0 end) as swim_count,
+         (case S.sport_id when 5 then SS.total_distance else 0 end) as swim_distance,
+         (case S.sport_id when 5 then SS.total_timer_time else 0 end) as swim_time,
+         (case S.sport_id when 5 then S.training_stress_score else 0 end) as swim_effort,
+         (case S.sport_id when 4 then (case S.sub_sport_id when 20 then 1 else 0 end) else 0 end) as strength_count,
+         (case S.sport_id when 4 then (case S.sub_sport_id when 20 then SS.total_distance else 0 end) else 0 end) as strength_distance,
+         (case S.sport_id when 4 then (case S.sub_sport_id when 20 then SS.total_timer_time else 0 end) else 0 end) as strength_time,
+         (case S.sport_id when 4 then (case S.sub_sport_id when 20 then S.training_stress_score else 0 end) else 0 end) as strength_effort,
+         1 as sport_count,
+         SS.total_distance as sport_distance,
+         SS.total_timer_time as sport_time,
+         S.training_stress_score as effort
+    from A_SESSION S, SECTION_SUMMARY SS
+   where S.summary_id = SS.id
+     and (S.sport_id in (1, 2, 5) or (S.sport_id = 4 and S.sub_sport_id = 20));
 
 -- Expands all summary data about a every session: duration, time, max speed,
 -- etc.  This can be used as a convenience view without having to remember all
