@@ -104,7 +104,7 @@
                                             #:basic-checks-only? (bc #f)
                                             #:expected-row-count (rc #f)
                                             #:expected-series-count (sc #f)
-                                            #:expected-session-count (nsessions 1)
+                                            #:expected-session-count (nsessions #f)
                                             #:extra-db-checks (db-check #f)
                                             #:extra-df-checks (df-check #f))
   (check-not-exn
@@ -119,10 +119,11 @@
          (when db-check
            (db-check db))
          (define sids (aid->sid (cdr result) db))
-         (check = (length sids) nsessions)
+         (when nsessions
+           (check = (length sids) nsessions))
          (for ((sid (in-list sids))
-               (expected-row-count (in-list (if (integer? rc) (list rc) rc)))
-               (expected-series-count (in-list (if (integer? sc) (list sc) sc))))
+               (expected-row-count (if (list? rc) (in-list rc) (in-cycle (in-value rc))))
+               (expected-series-count (if (list? sc) (in-list sc) (in-cycle (in-value sc)))))
            (let ((df (session-df db sid)))
              ;; (printf "got the session~%")(flush-output)
              (check-session-df df

@@ -15,11 +15,13 @@
 
 (require racket/format
          rackunit
+         db
          "test-util.rkt"
          "../rkt/data-frame/df.rkt"
          "../rkt/session-df.rkt"
          "../rkt/series-meta.rkt"
-         "../rkt/weather.rkt")
+         "../rkt/weather.rkt"
+         "../rkt/database.rkt")
 
 (set-allow-weather-download #f)        ; don't download weather for unit tests
 
@@ -231,7 +233,7 @@ select count(*)
         ))
      (do-basic-checks
       "./test-fit/f0018.fit"
-      '(16 16 25 16 22)
+      '(16 16 37 16 23)
       '(583 30 10217 10 8612)
       #:extra-db-checks
       (lambda (db)

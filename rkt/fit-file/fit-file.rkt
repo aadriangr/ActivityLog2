@@ -865,18 +865,20 @@
       #t)
 
     (define/override (on-record record)
+      (define precord (process-fields record))
       (if (null? records)
-          (set! records (cons record records))
+          (set! records (cons precord records))
           ;; Check if this record has the same timestamp as the last one.
           ;; Some devices record several data points in different records with
           ;; the same timestamp.
           (let ((last-record (car records)))
-            (if (equal? (dict-ref record 'timestamp #f)
+            (if (equal? (dict-ref precord 'timestamp #f)
                         (dict-ref last-record 'timestamp #t))
                 ;; Merge the records, as they share timestamps
-                (set! records (cons (append record last-record) (cdr records)))
-                (set! records (cons record records)))))
+                (set! records (cons (append precord last-record) (cdr records)))
+                (set! records (cons precord records)))))
       #t)
+
 
     (define/override (on-length length)
       ;; (display (format "*** LENGTH ~a~%" (dict-ref length 'timestamp #f)))
