@@ -145,7 +145,7 @@ select count(*)
      (do-basic-checks "./test-fit/f0012.fit" 6 47)
      (do-basic-checks "./test-fit/f0013.fit" 18 8253)
      (do-basic-checks
-      "./test-fit/f0014.fit" 19 155
+      "./test-fit/f0014.fit" 20 155
       #:extra-db-checks
       (lambda (db)
         (check-xdata-app-count db 1)
@@ -154,7 +154,7 @@ select count(*)
         (check-xdata-field-present db "f848e2ecad564dbd8e36eaf0316d5ea3" "current_wbal")
         ))
      (do-basic-checks
-      "./test-fit/f0015.fit" 19 4057
+      "./test-fit/f0015.fit" 22 4057
       #:extra-db-checks
       (lambda (db)
         (check-xdata-app-count db 2)
@@ -177,7 +177,7 @@ select count(*)
 
         ))
      (do-basic-checks
-      "./test-fit/f0016.fit" 23 2119
+      "./test-fit/f0016.fit" 27 2119
       #:extra-db-checks
       (lambda (db)
         (check-xdata-app-count db 1)
@@ -199,7 +199,7 @@ select count(*)
         )
       #:extra-df-checks check-run-power)
      (do-basic-checks
-      "./test-fit/f0017.fit" 16 3211
+      "./test-fit/f0017.fit" 18 3211
       #:extra-db-checks
       (lambda (db)
         (check-xdata-app-count db 1)
@@ -233,7 +233,7 @@ select count(*)
         ))
      (do-basic-checks
       "./test-fit/f0018.fit"
-      '(16 16 37 16 23)
+      '(16 16 37 16 30)
       '(583 30 10217 10 8612)
       #:extra-db-checks
       (lambda (db)
