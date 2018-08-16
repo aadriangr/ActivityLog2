@@ -14,7 +14,7 @@
 -- more details.
 
 create table SCHEMA_VERSION(version integer);
-insert into SCHEMA_VERSION(version) values(29);
+insert into SCHEMA_VERSION(version) values(30);
 
 
 --........................................................ Enumerations ....
