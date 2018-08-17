@@ -50,4 +50,4 @@ function download_file {
 }
 
 download_file "1l-COKZ8pMef4JUX6E7HBVEEYMAYO2Noo" # test-db
-download_file "1SPcZkCMksmxeDNRdK3Phf5U3CA_-CdSD" # test-fit
+download_file "1IfWTfzTowCqhgrPRysGlvzFkrqMCGgA3" # test-fit

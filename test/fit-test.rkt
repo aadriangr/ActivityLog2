@@ -114,6 +114,67 @@ select count(*)
                           app-guid field-name)
          (format "xdata-has-summary-values app ~a, field ~a" app-guid field-name)))
 
+
+(define (check-stryd-xdata db)
+  (check-xdata-app-count db 1)
+  (check-xdata-app-present db "660a581e5301460c8f2f034c8b6dc90f")
+  (check-xdata-field-count db 7)
+  (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Leg Spring Stiffness")
+  (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Form Power")
+  (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Elevation")
+  (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Vertical Oscillation")
+  (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Ground Time")
+  (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Cadence")
+  (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Power")
+
+  (check-xdata-trackpoint-values
+   db "660a581e5301460c8f2f034c8b6dc90f" "Leg Spring Stiffness")
+  (check-xdata-trackpoint-values
+   db "660a581e5301460c8f2f034c8b6dc90f" "Form Power")
+  (check-xdata-trackpoint-values
+   db "660a581e5301460c8f2f034c8b6dc90f" "Elevation")
+  (check-xdata-trackpoint-values
+   db "660a581e5301460c8f2f034c8b6dc90f" "Vertical Oscillation")
+  (check-xdata-trackpoint-values
+   db "660a581e5301460c8f2f034c8b6dc90f" "Ground Time")
+  (check-xdata-trackpoint-values
+   db "660a581e5301460c8f2f034c8b6dc90f" "Cadence")
+  (check-xdata-trackpoint-values
+   db "660a581e5301460c8f2f034c8b6dc90f" "Power")
+
+  )
+
+(define (check-outdoorsports-xdata db)
+  (check-xdata-app-count db 1)
+  (check-xdata-app-present db "27dfb7e5900f4c2d80abc57015f42124")
+  (check-xdata-field-count db 9)
+  (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "total_caloriesAV")
+  (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "total_calories")
+  (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "BatteryUsed")
+  (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "avg_cadence")
+  (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "Time")
+  (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "Latitude")
+  (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "Longitude")
+  (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "eE")
+  (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "StrideDistance")
+
+  (check-xdata-trackpoint-values
+   db "27dfb7e5900f4c2d80abc57015f42124" "eE")
+  (check-xdata-trackpoint-values
+   db "27dfb7e5900f4c2d80abc57015f42124" "StrideDistance")
+
+  (check-xdata-summary-values
+   db "27dfb7e5900f4c2d80abc57015f42124" "total_caloriesAV")
+  (check-xdata-summary-values
+   db "27dfb7e5900f4c2d80abc57015f42124" "total_calories")
+  (check-xdata-summary-values
+   db "27dfb7e5900f4c2d80abc57015f42124" "BatteryUsed")
+  (check-xdata-summary-values
+   db "27dfb7e5900f4c2d80abc57015f42124" "avg_cadence")
+  (check-xdata-summary-values
+   db "27dfb7e5900f4c2d80abc57015f42124" "Time")
+  )
+
 (define fit-files-test-suite
   (test-suite
    "FIT files test suite"
@@ -201,72 +262,14 @@ select count(*)
       #:extra-df-checks check-run-power)
      (do-basic-checks
       "./test-fit/f0017.fit" 18 3211
-      #:extra-db-checks
-      (lambda (db)
-        (check-xdata-app-count db 1)
-        (check-xdata-app-present db "27dfb7e5900f4c2d80abc57015f42124")
-        (check-xdata-field-count db 9)
-        (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "total_caloriesAV")
-        (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "total_calories")
-        (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "BatteryUsed")
-        (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "avg_cadence")
-        (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "Time")
-        (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "Latitude")
-        (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "Longitude")
-        (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "eE")
-        (check-xdata-field-present db "27dfb7e5900f4c2d80abc57015f42124" "StrideDistance")
-
-        (check-xdata-trackpoint-values
-         db "27dfb7e5900f4c2d80abc57015f42124" "eE")
-        (check-xdata-trackpoint-values
-         db "27dfb7e5900f4c2d80abc57015f42124" "StrideDistance")
-
-        (check-xdata-summary-values
-         db "27dfb7e5900f4c2d80abc57015f42124" "total_caloriesAV")
-        (check-xdata-summary-values
-         db "27dfb7e5900f4c2d80abc57015f42124" "total_calories")
-        (check-xdata-summary-values
-         db "27dfb7e5900f4c2d80abc57015f42124" "BatteryUsed")
-        (check-xdata-summary-values
-         db "27dfb7e5900f4c2d80abc57015f42124" "avg_cadence")
-        (check-xdata-summary-values
-         db "27dfb7e5900f4c2d80abc57015f42124" "Time")
-        ))
+      #:extra-db-checks check-outdoorsports-xdata)
      (do-basic-checks
-      "./test-fit/f0018.fit"
-      '(16 16 37 16 30)
-      '(583 30 10217 10 8612)
-      #:extra-db-checks
-      (lambda (db)
-        (check-xdata-app-count db 1)
-        (check-xdata-app-present db "660a581e5301460c8f2f034c8b6dc90f")
-        (check-xdata-field-count db 7)
-        (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Leg Spring Stiffness")
-        (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Form Power")
-        (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Elevation")
-        (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Vertical Oscillation")
-        (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Ground Time")
-        (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Cadence")
-        (check-xdata-field-present db "660a581e5301460c8f2f034c8b6dc90f" "Power")
-
-        (check-xdata-trackpoint-values
-         db "660a581e5301460c8f2f034c8b6dc90f" "Leg Spring Stiffness")
-        (check-xdata-trackpoint-values
-         db "660a581e5301460c8f2f034c8b6dc90f" "Form Power")
-        (check-xdata-trackpoint-values
-         db "660a581e5301460c8f2f034c8b6dc90f" "Elevation")
-        (check-xdata-trackpoint-values
-         db "660a581e5301460c8f2f034c8b6dc90f" "Vertical Oscillation")
-        (check-xdata-trackpoint-values
-         db "660a581e5301460c8f2f034c8b6dc90f" "Ground Time")
-        (check-xdata-trackpoint-values
-         db "660a581e5301460c8f2f034c8b6dc90f" "Cadence")
-        (check-xdata-trackpoint-values
-         db "660a581e5301460c8f2f034c8b6dc90f" "Power")
-
-        )
+      "./test-fit/f0018.fit" '(16 16 37 16 30) '(583 30 10217 10 8612)
+      #:extra-db-checks check-stryd-xdata
       #:expected-session-count 5)
-
+     (do-basic-checks
+      "./test-fit/f0019.fit" 24 4081
+      #:extra-db-checks check-stryd-xdata)
      (do-multi-checks
       ;; These two files contain data from the same XDATA app, the application
       ;; should only be recorded once...
