@@ -17,10 +17,8 @@
 
 
 (require
- db
- plot
+ plot/no-gui
  racket/class
- racket/match
  racket/gui/base
  racket/math
  racket/string
@@ -29,16 +27,15 @@
  racket/hash
  racket/format
  "trends-chart.rkt"
- "../widgets/icon-resources.rkt"
  "../widgets/main.rkt"
  "../plot-hack.rkt"
- "../data-frame.rkt"
  "../al-widgets.rkt"
  "../series-meta.rkt"
  "../metrics.rkt"
  "../utilities.rkt"
  "../plot-util.rkt"
- "../fmt-util.rkt")
+ "../fmt-util.rkt"
+ "../data-frame/histogram.rkt")
 
 (provide hist-trends-chart%)
 
@@ -359,17 +356,17 @@
        (list
         (tick-grid)
         (cond (dual?
-               (make-histogram-renderer/dual
+               (histogram-renderer/dual
                 histogram (send axis1 plot-label) (send axis2 plot-label)
                 #:x-value-formatter (send axis1 value-formatter)
                 #:color1 (send axis1 plot-color)
                 #:color2 (send axis2 plot-color)))
               (factor-fn
-               (make-histogram-renderer/factors
+               (histogram-renderer/factors
                 histogram factor-fn factor-colors
                 #:x-value-formatter (send axis1 value-formatter)))
              (#t
-              (make-histogram-renderer
+              (histogram-renderer
                histogram
                #:x-value-formatter (send axis1 value-formatter)
                #:color (send axis1 plot-color)))))))

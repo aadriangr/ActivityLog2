@@ -2,7 +2,7 @@
 ;; inspect-graphs.rkt -- graphs for various data series for a session
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -14,7 +14,7 @@
 ;; FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
 ;; more details.
 
-(require plot
+(require plot/no-gui
          racket/class
          racket/contract
          racket/gui/base
@@ -30,7 +30,9 @@
          "../fmt-util.rkt"
          "../series-meta.rkt"
          "../sport-charms.rkt"
-         "../data-frame.rkt"
+         "../data-frame/df.rkt"
+         "../data-frame/bsearch.rkt"
+         "../data-frame/statistics.rkt"
          "../utilities.rkt"
          "../widgets/main.rkt"
          "../session-df.rkt"
@@ -50,7 +52,7 @@
 ;;.............................................................. helpers ....
 
 (define (is-lap-swimming? data-frame)
-  (send data-frame get-property 'is-lap-swim?))
+  (df-get-property data-frame 'is-lap-swim?))
 
 
 ;;.......................................................... chart-view% ....
@@ -83,23 +85,49 @@
      (vector-ref (vector-ref data-series start-idx) 0)
      (vector-ref (vector-ref data-series end-idx) 0))))
 
+(define (find-change-point p0 p1 f0 f1 epsilon factor-fn key-fn)
+  (match-define (vector x0 y0 z0 ...) p0) ; previous
+  (match-define (vector x1 y1 z1 ...) p1) ; current
+  (if (< (abs (- y1 y0)) epsilon)
+      p1
+      (let* ((pmid (apply vector (/ (+ x0 x1) 2) (/ (+ y0 y1) 2) z1))
+             (fmid (factor-fn (key-fn pmid))))
+        (if (equal? f0 fmid)
+            (find-change-point pmid p1 f0 f1 epsilon factor-fn key-fn)
+            (find-change-point p0 pmid f0 f1 epsilon factor-fn key-fn)))))
+
 ;; Split DATA-SERIES into continuous segments having the same factor
 ;; (according to FACTOR-FN).  For example, if the data series contains heart
 ;; rate and the FACTOR-FN returns zones, the function will split the data into
 ;; segments that have the same heart rate zone.
-(define (split-by-factor data-series factor-fn #:key (key #f))
+(define (split-by-factor data-series factor-fn
+                         #:key (key-fn values)
+                         #:epsilon (epsilon 0.1))
   (define result '())
   (define current-factor #f)
   (define seq '())
-  (for ([item data-series])
-    (let ((factor (factor-fn (if key (key item) item))))
-      (unless current-factor
-        (set! current-factor factor))
-      (set! seq (cons item seq))
-      (unless (equal? factor current-factor)
-        (set! result (cons (cons current-factor (reverse seq)) result))
-        (set! current-factor factor)
-        (set! seq (list item)))))
+
+  (let loop ((index 0))
+    (when (< index (vector-length data-series))
+      (let* ([item (vector-ref data-series index)]
+             [factor (factor-fn (key-fn item))])
+        (unless current-factor
+          (set! current-factor factor))
+        (if (equal? factor current-factor)
+            (begin
+              (set! seq (cons item seq))    ; factor has not changed
+              (loop (add1 index)))
+            (let ((mp (find-change-point (car seq) item current-factor factor
+                                         epsilon factor-fn key-fn)))
+              (set! seq (cons mp seq))
+              (set! result (cons (cons current-factor (reverse seq)) result))
+              (set! seq (list mp))
+              (set! current-factor (factor-fn (key-fn mp)))
+              (if (equal? factor current-factor)
+                  (begin
+                    (set! seq (cons item seq))
+                    (loop (add1 index)))
+                  (loop index)))))))
   ;; Add last one
   (when current-factor
     (set! result (cons (cons current-factor (reverse seq)) result)))
@@ -140,7 +168,7 @@
                   ivl
                   struct-name)
   (-> nonnegative-integer?
-      (or/c #f (is-a?/c data-frame%))
+      (or/c #f data-frame?)
       (or/c #f (is-a?/c series-metadata%))
       (or/c #f (is-a?/c series-metadata%))
       (or/c #f (is-a?/c series-metadata%))
@@ -169,7 +197,7 @@
   (;; Automatically set by the ps guard to a (next-token), regardless of what
    ;; you pass in here :-)
    token
-   ;; The data-frame% from which we extract data
+   ;; The data-frame from which we extract data
    df
    ;; series-meta for X-axis, this will be time, elapsed time or distance
    x-axis
@@ -253,20 +281,34 @@
 ;; An empty plot data structure, for convenience.
 (define empty-pd (pd 0 #f #f #f #f #f #f))
 
-(define (find-y data x)
-  (cond
-    ((vector? data)
-     (let ((index (bsearch data x #:key (lambda (v) (vector-ref v 0)))))
-       (and index
-            (< index (vector-length data))
-            (vector-ref (vector-ref data index) 1))))
-    ((pair? data)
-     (for/or ((prev (in-list data))
-              (next (in-list (cdr data))))
-       (if (<= (vector-ref prev 0) x (vector-ref next 0))
-           (vector-ref prev 1)
-           #f)))
-    (#t #f)))
+;; Find the y values corresponding to the X value in the plot data.  This is
+;; used to display the Y values on hover.  It returns six values: x, y1, y2
+;; and labels for x y1 and y2 using the corresponding series formatter.  y2
+;; and the label for y2 will be #f if there is no secondary axis defined for
+;; the plot.
+;;
+;; NOTE: the y values displayed are the actual values at position X.  There
+;; might be a discrepancy between what is displayed and what the plot shows,
+;; as there is some filtering and line simplification going on for the plots.
+(define (find-y-values plot-state x)
+  (define df (ps-df plot-state))
+  (define x-axis (ps-x-axis plot-state))
+  (define y-axis (ps-y-axis plot-state))
+  (define y-axis2 (ps-y-axis2 plot-state))
+  (define xseries (send x-axis series-name))
+  (define yseries1 (send y-axis series-name))
+  (define yseries2 (if y-axis2 (send y-axis2 series-name) #f))
+  (define xfmt (send x-axis value-formatter))
+  (define yfmt (send y-axis value-formatter))
+  (define y1 (or (df-lookup df xseries yseries1 x)
+                 (send y-axis missing-value)))
+  (define y2 (if yseries2
+                 (or (df-lookup df xseries yseries2 x)
+                     (send y-axis2 missing-value))
+                 #f))
+  ;; NOTE: we might land on a #f value in the original data series.  Normally,
+  ;; we should look up a neighbor...
+  (values x y1 y2 (xfmt x) (if y1 (yfmt y1) "") (if y2 (yfmt y2) "")))
 
 ;; Find the swim stroke name at the X value on the plot.  Returns #f if the
 ;; PLOT-STATE is not for a swim activity or the y-axis is not supposed to
@@ -278,10 +320,9 @@
   (define xseries (send (ps-x-axis plot-state) series-name))
   (and
    (send (ps-y-axis plot-state) plot-color-by-swim-stroke?)
-   (send df contains? xseries "swim_stroke")
-       (let* ((index (send df get-index xseries x))
-              (stroke (send df ref index "swim_stroke")))
-         (and stroke (get-swim-stroke-name stroke)))))
+   (df-contains? df xseries "swim_stroke")
+   (let ((stroke (df-lookup df xseries "swim_stroke" x)))
+     (and stroke (get-swim-stroke-name stroke)))))
 
 ;; Produce a renderer tree from the data in the PD and PS structures.  We
 ;; assume the PD structure is up-to date w.r.t PD structure.
@@ -295,9 +336,10 @@
         (fdata (pd-fdata pd))
         (y-range (pd-y-range pd)))
     (cond ((and df (is-lap-swimming? df)
-                (send y plot-color-by-swim-stroke?))
+                (send y plot-color-by-swim-stroke?)
+                (df-contains? df "swim_stroke"))
            (make-plot-renderer/swim-stroke
-            sdata (send df select "swim_stroke")))
+            sdata (df-select df "swim_stroke")))
           ((and (ps-color? ps) fdata)
            (make-plot-renderer-for-splits fdata y-range (send y factor-colors)))
           ((and sdata sdata2)
@@ -379,30 +421,28 @@
      ;; OLD-PD
      (define sdata
        (if need-sdata?
-           (let ((df (ps-df new-ps))
-                 (x (ps-x-axis new-ps))
-                 (y (ps-y-axis new-ps))
-                 (filter (ps-filter new-ps)))
-             (if (send df contains? (send x series-name) (send y series-name))
-                 (let ([ds (extract-data df x y filter #t)])
-                   (if (is-lap-swimming? df)
-                       (add-verticals ds)
-                       ds))
+           (let* ((df (ps-df new-ps))
+                  (x (ps-x-axis new-ps))
+                  (y (ps-y-axis new-ps))
+                  (filter (ps-filter new-ps))
+                  (lap-swimming? (is-lap-swimming? df)))
+             (if (df-contains? df (send x series-name) (send y series-name))
+                 (let ([ds (extract-data df x y filter (not lap-swimming?))])
+                   (if lap-swimming? (add-verticals ds) ds))
                  #f))
            (pd-sdata old-pd)))
      ;; Calculate new SDATA2 if NEED-SDATA2? is #t, or re-use the one from
      ;; OLD-PD (but only if we actually have an y-axis2)
      (define sdata2
        (if need-sdata2?
-           (let ((df (ps-df new-ps))
-                 (x (ps-x-axis new-ps))
-                 (y (ps-y-axis2 new-ps))
-                 (filter (ps-filter new-ps)))
-             (if (send df contains? (send x series-name) (send y series-name))
-                 (let ([ds (extract-data df x y filter #t)])
-                   (if (is-lap-swimming? df)
-                       (add-verticals ds)
-                       ds))
+           (let* ((df (ps-df new-ps))
+                  (x (ps-x-axis new-ps))
+                  (y (ps-y-axis2 new-ps))
+                  (filter (ps-filter new-ps))
+                  (lap-swimming? (is-lap-swimming? df)))
+             (if (df-contains? df (send x series-name) (send y series-name))
+                 (let ([ds (extract-data df x y filter (not lap-swimming?))])
+                   (if lap-swimming? (add-verticals ds) ds))
                  #f))
            (if (ps-y-axis2 new-ps)
                (pd-sdata2 old-pd) ; don't reuse sdata2 unless there is an y-axis2
@@ -414,12 +454,15 @@
        (if need-fdata?
            (let ((df (ps-df new-ps))
                  (y (ps-y-axis new-ps)))
-             (let* ((sport (send df get-property 'sport))
-                    (sid (send df get-property 'session-id))
+             (let* ((sport (df-get-property df 'sport))
+                    (sid (df-get-property df 'session-id))
                     (factor-fn (send y factor-fn sport sid))
-                    (factor-colors (send y factor-colors)))
+                    (factor-colors (send y factor-colors))
+                    (epsilon (expt 10 (- (send y fractional-digits)))))
                (if (and factor-fn sdata)
-                   (split-by-factor sdata factor-fn #:key (lambda (v) (vector-ref v 1)))
+                   (split-by-factor sdata factor-fn
+                                    #:key (lambda (v) (vector-ref v 1))
+                                    #:epsilon epsilon)
                    #f)))
            (pd-fdata old-pd)))
      ;; Calculate new Y-RANGE, if needed, or reuse the one from OLD-PD.
@@ -572,7 +615,7 @@
                    [callback (lambda (c e)
                                (let* ((df (ps-df plot-state))
                                       (index (send c get-selection))
-                                      (sport (and df (send df get-property 'sport))))
+                                      (sport (and df (df-get-property df 'sport))))
                                  (when sport
                                    (hash-set! y-axis-by-sport sport index))
                                  (on-y-axis-selected index)))]))
@@ -650,24 +693,17 @@
             (match-define (list xmin xmax color) (pd-hlivl plot-data))
             (add-renderer (pu-vrange xmin xmax color)))
           (when x
-            (let ((y1 (find-y (pd-sdata plot-data) x))
-                  (format-value (send (ps-y-axis plot-state) value-formatter))
-                  (x-format-value (send (ps-x-axis plot-state) value-formatter))
-                  (y2 (and pd-sdata2 (find-y (pd-sdata2 plot-data) x))))
-              (cond ((and y1 y2)
-                     (let ((label (string-append (format-value y1) "/"
-                                                 (format-value y2) " @ "
-                                                 (x-format-value x))))
-                       (add-renderer (pu-label x (max y1 y2) label))))
-                    (y1
-                     (let ((label (string-append (format-value y1) " @ "
-                                                 (x-format-value x)))
-                           (swim-stroke (find-swim-stroke plot-state x)))
-                       (add-renderer (pu-label x y1 label swim-stroke))))
-                    (y2
-                     (let ((label (string-append (format-value y2) " @ "
-                                                 (x-format-value x))))
-                       (add-renderer (pu-label x y2 label))))))
+            (define-values (_ y1 y2 xlab ylab1 ylab2) (find-y-values plot-state x))
+            (cond ((and y1 y2)
+                   (let ((label (string-append ylab1 "/" ylab2 " @ " xlab)))
+                     (add-renderer (pu-label x (max y1 y2) label))))
+                  (y1
+                   (let ((label (string-append ylab1 " @ " xlab))
+                         (swim-stroke (find-swim-stroke plot-state x)))
+                     (add-renderer (pu-label x y1 label swim-stroke))))
+                  (y2
+                   (let ((label (string-append ylab2 " @ " xlab)))
+                     (add-renderer (pu-label x y2 label)))))
             (add-renderer (pu-vrule x)))
           (set-overlay-renderers the-plot-snip rt))))
 
@@ -688,12 +724,16 @@
               (lambda ()
                 (if (= (pd-token npdata) (ps-token plot-state))
                     (begin
-                      (when (pd-plot-rt npdata)
-                        (set! the-plot-snip (put-plot/canvas graph-canvas npdata pstate))
-                        (set-mouse-event-callback the-plot-snip plot-hover-callback)
-                        (when (pd-hlivl npdata)
-                          (match-define (list xmin xmax color) (pd-hlivl npdata))
-                          (set-overlay-renderers the-plot-snip (list (pu-vrange xmin xmax color)))))
+                      (if (pd-plot-rt npdata)
+                          (begin
+                            (set! the-plot-snip (put-plot/canvas graph-canvas npdata pstate))
+                            (set-mouse-event-callback the-plot-snip plot-hover-callback)
+                            (when (pd-hlivl npdata)
+                              (match-define (list xmin xmax color) (pd-hlivl npdata))
+                              (set-overlay-renderers the-plot-snip (list (pu-vrange xmin xmax color)))))
+                          (begin
+                            (send graph-canvas set-snip #f)
+                            (send graph-canvas set-background-message "No data for plot...")))
                       (set! previous-plot-state pstate)
                       (set! plot-state pstate)
                       (set! plot-data npdata)
@@ -711,12 +751,16 @@
              (queue-callback
               (lambda ()
                 (if (= (pd-token pdata) cached-bitmap-token)
-                    (begin
-                      (set! the-plot-snip (put-plot/canvas graph-canvas pdata pstate))
-                      (set-mouse-event-callback the-plot-snip plot-hover-callback)
-                      (when (pd-hlivl pdata)
-                        (match-define (list xmin xmax color) (pd-hlivl pdata))
-                        (set-overlay-renderers the-plot-snip (list (pu-vrange xmin xmax color)))))
+                    (if (pd-plot-rt pdata)
+                        (begin
+                          (set! the-plot-snip (put-plot/canvas graph-canvas pdata pstate))
+                          (set-mouse-event-callback the-plot-snip plot-hover-callback)
+                          (when (pd-hlivl pdata)
+                            (match-define (list xmin xmax color) (pd-hlivl pdata))
+                            (set-overlay-renderers the-plot-snip (list (pu-vrange xmin xmax color)))))
+                        (begin
+                          (send graph-canvas set-snip #f)
+                          (send graph-canvas set-background-message "No data for plot...")))
                     (void)))))))))
 
     (define (refresh)
@@ -746,11 +790,15 @@
       (set! plot-state (struct-copy ps plot-state [df df] [ivl #f]))
       (set! export-file-name #f)
       (when (and y-axis-choice df)
-        (let* ((sport (send df get-property 'sport))
+        (let* ((sport (df-get-property df 'sport))
                (y-axis-index (hash-ref y-axis-by-sport sport 0)))
           (send y-axis-choice set-selection y-axis-index)
           (on-y-axis-selected y-axis-index)))
       (resume-flush)
+      ;; When a new data frame is set, remove the old plot immediately, as it
+      ;; is not relevant anymore.
+      (send graph-canvas set-snip #f)
+      (send graph-canvas set-background-message "Working...")
       (refresh))
 
     (define/public (zoom-to-lap zoom)
@@ -805,7 +853,7 @@
           (let* ((df (ps-df plot-state))
                  (y (ps-y-axis plot-state))
                  (y2 (ps-y-axis2 plot-state))
-                 (sid (send df get-property 'session-id))
+                 (sid (df-get-property df 'session-id))
                  (s1 (and y (send y series-name)))
                  (s2 (and y2 (send y2 series-name))))
             (cond ((and sid s1 s2)
@@ -875,13 +923,13 @@
       (set! avg-speed #f)
       (set! zones #f)
       (when data-frame
-        (define sid (send data-frame get-property 'session-id))
+        (define sid (df-get-property data-frame 'session-id))
         (set! zones (get-session-sport-zones sid 2)))
       (super set-data-frame data-frame))
 
     (define/override (is-valid-for? data-frame)
       (for/or ([series '("speed" "pace" "speed-zone")])
-        (send data-frame contains? series)))
+        (df-contains? data-frame series)))
 
     (setup-y-axis-items (map car y-axis-items))
     (set-y-axis (second (list-ref y-axis-items 0)))
@@ -916,7 +964,7 @@
       (super set-data-frame data-frame))
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains/any? "alt" "calt"))
+      (df-contains/any? data-frame "alt" "calt"))
 
     (setup-y-axis-items (map car y-axis-items))
     (set-y-axis (second (list-ref y-axis-items 0)))
@@ -975,13 +1023,13 @@
       (set! avg-hr #f)
       (set! zones #f)
       (when data-frame
-        (define sid (send data-frame get-property 'session-id))
+        (define sid (df-get-property data-frame 'session-id))
         (set! avg-hr #f)
         (set! zones (get-session-sport-zones sid 1)))
       (super set-data-frame data-frame))
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains/any? "hr" "hr-pct" "hr-zone"))
+      (df-contains/any? data-frame "hr" "hr-pct" "hr-zone"))
 
     (setup-y-axis-items (map car y-axis-items))
     (set-y-axis (second (list-ref y-axis-items 0)))
@@ -1029,7 +1077,7 @@
           (if avg
               (let* ((label (string-append "Avg " (fmt-fn avg))))
                 (function (lambda (x) avg) #:label label))
-            #f))))
+              #f))))
 
     (define/override (on-y-axis-selected index)
       (unless (equal? selected-y-axis index)
@@ -1040,12 +1088,12 @@
       (set! avg-cadence #f)
       (set! avg-stride #f)
       (when data-frame
-        (let ((sp (send data-frame get-property 'sport)))
+        (let ((sp (df-get-property data-frame 'sport)))
           (set! sport (vector-ref sp 0))))
       (super set-data-frame data-frame))
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains/any? "cad" "stride"))
+      (df-contains/any? data-frame "cad" "stride"))
 
     (setup-y-axis-items (map car y-axis-items))
     (set-y-axis (second (list-ref y-axis-items 0)))
@@ -1105,13 +1153,13 @@
       (set! avg-vosc #f)
       (set! avg-vratio #f)
       (if data-frame
-          (let ((sp (send data-frame get-property 'sport)))
+          (let ((sp (df-get-property data-frame 'sport)))
             (set! sport (vector-ref sp 0)))
           (set! sport #f))
       (super set-data-frame data-frame))
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains/any? "vosc" "vratio"))
+      (df-contains/any? data-frame "vosc" "vratio"))
 
     (setup-y-axis-items (map car y-axis-items))
     (set-y-axis (second (list-ref y-axis-items 0)))
@@ -1171,12 +1219,12 @@
       (set! avg-gct #f)
       (set! avg-gct-pct #f)
       (when data-frame
-        (let ((sp (send data-frame get-property 'sport)))
+        (let ((sp (df-get-property data-frame 'sport)))
           (set! sport (vector-ref sp 0))))
       (super set-data-frame data-frame))
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains/any? "gct" "pgct"))
+      (df-contains/any? data-frame "gct" "pgct"))
 
     (setup-y-axis-items (map car y-axis-items))
     (set-y-axis (second (list-ref y-axis-items 0)))
@@ -1198,7 +1246,7 @@
     (send this set-y-axis axis-wbal)
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains? "wbal"))
+      (df-contains? data-frame "wbal"))
 
     ))
 
@@ -1224,7 +1272,7 @@
       avg-power)
 
     (define y-axis-items
-      `(("Watts" ,axis-power ,values ,number->string)
+      `(("Watts" ,axis-power ,values ,power->string)
 	("Zone" ,axis-power-zone ,(lambda (v) (val->zone v zones))
          ,(lambda (v) (format-48 "~1,1F" (val->zone v zones))))))
 
@@ -1248,12 +1296,12 @@
       (set! avg-power #f)
       (set! zones #f)
       (when data-frame
-        (define sid (send data-frame get-property 'session-id))
+        (define sid (df-get-property data-frame 'session-id))
         (set! zones (get-session-sport-zones sid 3)))
       (super set-data-frame data-frame))
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains/any? "pwr" "pwr-zone"))
+      (df-contains/any? data-frame "pwr" "pwr-zone"))
 
     (setup-y-axis-items (map car y-axis-items))
     (set-y-axis (second (list-ref y-axis-items 0)))
@@ -1283,10 +1331,10 @@
 
     (define/override (get-average-renderer)
       (let ((avg (get-avg-lrbal)))
-          (if avg
-              (let ((label (format-48 "Avg ~1,1F%" avg)))
-                (function (lambda (x) avg) #:label label))
-              #f)))
+        (if avg
+            (let ((label (format-48 "Avg ~1,1F%" avg)))
+              (function (lambda (x) avg) #:label label))
+            #f)))
 
     (set-y-axis axis-left-right-balance)
 
@@ -1295,7 +1343,7 @@
       (super set-data-frame data-frame))
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains? "lrbal"))
+      (df-contains? data-frame "lrbal"))
 
     ))
 
@@ -1314,7 +1362,7 @@
           axis-right-torque-effectiveness)
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains/any? "lteff" "rteff"))
+      (df-contains/any? data-frame "lteff" "rteff"))
 
     ))
 
@@ -1333,7 +1381,7 @@
           axis-right-pedal-smoothness)
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains/any? "lpsmth" "rpsmth"))
+      (df-contains/any? data-frame "lpsmth" "rpsmth"))
 
     ))
 
@@ -1352,7 +1400,7 @@
           axis-right-platform-centre-offset)
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains/any? "lpco" "rpco"))
+      (df-contains/any? data-frame "lpco" "rpco"))
 
     ))
 
@@ -1404,9 +1452,10 @@
           (fn))))
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains/any?
-            "lpps" "lppe" "lppa" "rpps" "rppe" "rppa"
-            "lppps" "lpppe" "lpppa" "rppps" "rpppe" "rpppa"))
+      (df-contains/any?
+       data-frame
+       "lpps" "lppe" "lppa" "rpps" "rppe" "rppa"
+       "lppps" "lpppe" "lpppa" "rppps" "rpppe" "rpppa"))
 
     (setup-y-axis-items (map car y-axis-items))
     (on-y-axis-selected 0)
@@ -1440,7 +1489,7 @@
             (let ((pace (m/s->swim-pace avg)))
               (function (lambda (x) pace)
                         #:label (string-append "Avg " (swim-pace->string avg #t))))
-         #f)))
+            #f)))
 
     (define/override (set-data-frame data-frame)
       (set! avg-speed #f)
@@ -1482,7 +1531,7 @@
       (super set-data-frame data-frame))
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains? "swolf"))
+      (df-contains? data-frame "swolf"))
 
     ))
 
@@ -1519,7 +1568,7 @@
       (super set-data-frame data-frame))
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains? "strokes"))
+      (df-contains? data-frame "strokes"))
 
     ))
 
@@ -1556,7 +1605,7 @@
       (super set-data-frame data-frame))
 
     (define/override (is-valid-for? data-frame)
-      (send data-frame contains? "cad"))
+      (df-contains? data-frame "cad"))
 
     ))
 
@@ -1815,7 +1864,7 @@
     (define show-avg? #f)           ; display the average line
     (define zoom-to-lap? #f)        ; zoom current lap via a stretch-transform
     (define color-by-zone? #f)      ; color series by zone (if there zones are
-                                    ; defined)
+    ; defined)
     (define filter-amount 0)        ; amount of filtering to use in graphs
 
     ;; Map the preferred x-axis (as an index) by sport, this is saved as a
@@ -1881,12 +1930,12 @@
                        [alignment '(center top)]))
 
     (define interval-view-panel (new vertical-pane%
-                                [parent panel]
-                                [border 0]
-                                [spacing 1]
-                                [min-width 220]
-                                [stretchable-width #f]
-                                [alignment '(left top)]))
+                                     [parent panel]
+                                     [border 0]
+                                     [spacing 1]
+                                     [min-width 220]
+                                     [stretchable-width #f]
+                                     [alignment '(left top)]))
 
     (define interval-choice #f)
     (let ((p (new horizontal-pane%
@@ -1898,12 +1947,12 @@
       (set! interval-choice (new interval-choice% [tag 'interval-choice-graphs] [parent p] [label ""])))
 
     (define interval-view (new mini-interval-view%
-                          [parent interval-view-panel]
-                          [tag 'activity-log:charts-mini-lap-view]
-                          [callback (lambda (n lap)
-                                      (let ((lap-num (dict-ref lap 'lap-num #f)))
-                                        (when lap-num
-                                          (highlight-lap (- lap-num 1) lap))))]))
+                               [parent interval-view-panel]
+                               [tag 'activity-log:charts-mini-lap-view]
+                               [callback (lambda (n lap)
+                                           (let ((lap-num (dict-ref lap 'lap-num #f)))
+                                             (when lap-num
+                                               (highlight-lap (- lap-num 1) lap))))]))
 
     (send interval-choice set-interval-view interval-view)
 
@@ -2075,8 +2124,14 @@
 
       (let ((lap-swimming? (is-lap-swimming? data-frame)))
 
+        ;; note: some activities might not contain a distance series.
         (set! x-axis-choices
-              (if lap-swimming? swim-x-axis-choices default-x-axis-choices))
+              (for/list ([axis (in-list (if lap-swimming?
+                                            swim-x-axis-choices
+                                            default-x-axis-choices))]
+                         #:when (df-contains? df (send (cdr axis) series-name)))
+                axis))
+
         (send filter-amount-choice set-selection (if lap-swimming? 0 filter-amount))
         (send filter-amount-choice enable (not lap-swimming?))
         (send x-axis-choice clear)

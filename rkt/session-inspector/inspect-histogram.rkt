@@ -14,21 +14,21 @@
 ;; FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
 ;; more details.
 
-(require plot
+(require plot/no-gui
          racket/class
+         racket/format
          racket/gui/base
          racket/list
          racket/match
          racket/string
-         racket/math
-         racket/format
-         "../utilities.rkt"
-         "../series-meta.rkt"
+         "../data-frame/df.rkt"
+         "../data-frame/histogram.rkt"
+         "../fmt-util.rkt"
          "../plot-hack.rkt"
-         "../data-frame.rkt"
-         "../widgets/main.rkt"
          "../plot-util.rkt"
-         "../fmt-util.rkt")
+         "../series-meta.rkt"
+         "../utilities.rkt"
+         "../widgets/main.rkt")
 
 (provide histogram-plot-panel%)
 
@@ -41,10 +41,8 @@
                (if (list? axis)
                    (let ()
                      (match-define (list name a1 a2) axis)
-                     (send df contains?
-                           (send a1 series-name)
-                           (send a2 series-name)))
-                   (send df contains? (send axis series-name))))
+                     (df-contains? df (send a1 series-name) (send a2 series-name)))
+                   (df-contains? df (send axis series-name))))
       axis))
   (sort al string<?
         #:key (lambda (a) (if (list? a) (first a) (send a headline)))))
@@ -197,10 +195,10 @@
     (define export-file-name #f)
 
     (define (current-sport)
-      (if data-frame (send data-frame get-property 'sport) #f))
+      (if data-frame (df-get-property data-frame 'sport) #f))
 
     (define (lap-swimming?)
-      (if data-frame (send data-frame get-property 'is-lap-swim?) #f))
+      (if data-frame (df-get-property data-frame 'is-lap-swim?) #f))
 
     ;; get the label of the axis at INDEX.  This is compicated by the fact
     ;; that some entries in AXIS-CHOICES are dual axes.
@@ -225,8 +223,8 @@
     ;; function.
     (define (maybe-enable-color-by-zone-checkbox)
       (let ((y-axis (list-ref axis-choices y-axis-index))
-            (sport (and data-frame (send data-frame get-property 'sport)))
-            (sid (and data-frame (send data-frame get-property 'session-id))))
+            (sport (and data-frame (df-get-property data-frame 'sport)))
+            (sid (and data-frame (df-get-property data-frame 'session-id))))
         (when (list? y-axis) (set! y-axis (second y-axis)))
         (send color-by-zone-check-box enable
               (send y-axis factor-fn sport sid))))
@@ -313,8 +311,8 @@
     (define (refresh-plot)
 
       (define (get-factor-fn axis df)
-        (let ((sport (send df get-property 'sport))
-              (sid (send df get-property 'session-id)))
+        (let ((sport (df-get-property df 'sport))
+              (sid (df-get-property df 'session-id)))
           (send axis factor-fn sport sid)))
 
       (unless inhibit-refresh
@@ -351,7 +349,7 @@
                     (combined-histograms (if h2 (combine-histograms h1 h2) h1))
                     (rt (cond
                           ((and axis2 combined-histograms)
-                           (make-histogram-renderer/dual
+                           (histogram-renderer/dual
                             combined-histograms
                             (send axis1 plot-label)
                             (send axis2 plot-label)
@@ -360,10 +358,10 @@
                             #:color2 (send axis2 plot-color)))
                           (h1
                            (if factor-fn
-                               (make-histogram-renderer/factors
+                               (histogram-renderer/factors
                                 h1 factor-fn factor-colors
                                 #:x-value-formatter (send axis1 value-formatter))
-                               (list (make-histogram-renderer
+                               (list (histogram-renderer
                                       h1
                                       #:x-value-formatter (send axis1 value-formatter)
                                       #:color (send axis1 plot-color)))))
@@ -438,21 +436,23 @@
         (let ((name (hash-ref axis-by-sport (current-sport) #f)))
           (let ((index (find-axis name axis-choices)))
             (set! y-axis-index (or index 0)))))
-      (send y-axis-choice set-selection y-axis-index)
+      (when (<= y-axis-index 0 (sub1 (send y-axis-choice get-number)))
+        (send y-axis-choice set-selection y-axis-index))
       (set! export-file-name #f)
       (restore-params-for-axis))
 
     (define/public (save-visual-layout)
-      (save-params-for-sport)
-      (let ((data (list 'gen2 axis-by-sport params-by-axis show-as-percentage?)))
-        (put-pref pref-tag data)))
+      (when (> (length axis-choices) 0)
+        (save-params-for-sport)
+        (let ((data (list 'gen2 axis-by-sport params-by-axis show-as-percentage?)))
+          (put-pref pref-tag data))))
 
     ;; Return a suitable file name for use by 'on-interactive-export-image'.
     ;; If 'export-file-name' is set, we use that, otherwise we compose a file
     ;; name from the session id and axis names of the plot.
     (define (get-default-export-file-name)
       (or export-file-name
-          (let ((sid (send data-frame get-property 'session-id))
+          (let ((sid (df-get-property data-frame 'session-id))
                 (axis (list-ref axis-choices y-axis-index)))
             (cond ((and sid (list? axis))
                    (format "histogram-~a-~a-~a.png" sid
@@ -481,10 +481,14 @@
              data-frame
              (if (lap-swimming?) swim-axis-choices default-axis-choices)))
       (install-axis-choices axis-choices)
-      (restore-params-for-sport)
-      (set! inhibit-refresh #f)
-      (set! export-file-name #f)
-      (maybe-enable-color-by-zone-checkbox)
-      (refresh-plot))
+      (if (> (length axis-choices) 0)
+          (begin
+            (restore-params-for-sport)
+            (set! inhibit-refresh #f)
+            (set! export-file-name #f)
+            (maybe-enable-color-by-zone-checkbox)
+            (refresh-plot))
+          (begin
+            (set! inhibit-refresh #f))))
 
     ))

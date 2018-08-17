@@ -2,7 +2,7 @@
 ;; series-meta.rkt -- helper classes for plotting various data series
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsanyi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -14,12 +14,13 @@
 ;; FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
 ;; more details.
 
-(require plot
+(require plot/no-gui
          racket/class
          racket/list
          racket/math
          racket/draw
          racket/format
+         racket/contract
          pict
          "fmt-util.rkt"
          "sport-charms.rkt"
@@ -56,7 +57,7 @@
                      (loop mid amax)
                      (loop amin mid))))))
       #f))
-  
+
 ;; Return the max speed (in meters/second) at which DISTANCE can be covered
 ;; according to the Pace-Duration function PD.
 ;;
@@ -164,7 +165,7 @@
     ;; are smaller.  This is used for series like pace, where a smaller value
     ;; means you are running faster, or for series which need to be minimized,
     ;; for example ground contact time or vertical oscillation.
-    (define/public (inverted-best-avg?) #f)
+    (define/public (inverted-mean-max?) #f)
 
     ;; Return the ticks to use for plotting values of this series.
     (define/public (plot-ticks) (linear-ticks))
@@ -331,7 +332,7 @@
           "Pace (min/km)" "Pace (min/mi)"))
     (define/override (should-filter?) #t)
     ;; (define/override (y-range) (cons 0 #f))
-    (define/override (inverted-best-avg?) #t)
+    (define/override (inverted-mean-max?) #t)
     (define/override (series-name) "pace")
     (define/override (name) "Pace")
     ;; NOTE: speed is stored in the FIT file as m/s * 1000 (and truncated
@@ -360,7 +361,7 @@
     (define/override (factor-colors) (ct:zone-colors))
 
     (define/override (have-cp-estimate?) #t)
-    
+
     (define/override (cp-estimate bavg-fn params)
       (define afn (lambda (t) (convert-pace->m/s (bavg-fn t))))
       ;; Check that the bavg function can provide values for the CP2
@@ -445,7 +446,10 @@
        p))
 
     (define/override (value-formatter)
-      (lambda (p) (pace->string (convert-pace->m/s p))))
+      (lambda (p)
+        (if (> p 0)
+            (pace->string (convert-pace->m/s p))
+            "")))
     ))
 
 (define axis-pace (new axis-pace%))
@@ -485,6 +489,8 @@
          (define/override (series-name) "alt")
          (define/override (name) "Elevation")
          (define/override (fractional-digits) 1)
+         ;; Don't replace missing values with anything, strip them out.
+         (define/override (missing-value) #f)
          )))
 (provide axis-elevation)
 
@@ -497,6 +503,8 @@
          (define/override (series-name) "calt")
          (define/override (name) "Elevation")
          (define/override (fractional-digits) 1)
+         ;; Don't replace missing values with anything, strip them out.
+         (define/override (missing-value) #f)
          )))
 (provide axis-corrected-elevation)
 
@@ -520,7 +528,7 @@
          (define/override (series-name) "grade")
          (define/override (fractional-digits) 1)
          (define/override (name) "Slope")
-         (define/override (inverted-best-avg?) #t))))
+         (define/override (inverted-mean-max?) #t))))
 (provide axis-grade-inverted)
 
 (define axis-hr-bpm
@@ -623,7 +631,7 @@
          (define/override (histogram-bucket-slot) 0.1)
          (define/override (series-name) "vratio")
          (define/override (name) "VRatio")
-         (define/override (inverted-best-avg?) #t)
+         (define/override (inverted-mean-max?) #t)
          (define/override (fractional-digits) 2)
 
          (define (vratio-factor vratio)
@@ -646,7 +654,7 @@
                "Vertical Oscillation (mm)" "Vertical Oscillation (inch)"))
          (define/override (should-filter?) #t)
          (define/override (histogram-bucket-slot) 0.1)
-         (define/override (inverted-best-avg?) #t)
+         (define/override (inverted-mean-max?) #t)
          (define/override (series-name) "vosc")
          (define/override (name) "VOsc")
          (define/override (fractional-digits) 1)
@@ -668,7 +676,7 @@
   (new (class series-metadata% (init) (super-new)
          (define/override (axis-label) "Ground Contact Time (ms)")
          (define/override (should-filter?) #t)
-         (define/override (inverted-best-avg?) #t)
+         (define/override (inverted-mean-max?) #t)
          (define/override (series-name) "gct")
          (define/override (name) "GCT")
 
@@ -690,7 +698,7 @@
          (define/override (axis-label) "Ground Contact Time (%)")
          (define/override (should-filter?) #t)
          (define/override (histogram-bucket-slot) 0.1)
-         (define/override (inverted-best-avg?) #t)
+         (define/override (inverted-mean-max?) #t)
          (define/override (series-name) "pgct")
          (define/override (name) "GCT percent")
          (define/override (fractional-digits) 1)
@@ -1049,7 +1057,7 @@
          (define/override (y-range) (cons 0 #f))
          (define/override (plot-color-by-swim-stroke?) #t)
          (define/override (series-name) "pace")
-         (define/override (inverted-best-avg?) #t)
+         (define/override (inverted-mean-max?) #t)
          (define/override (name) "Pace")
          (define/override (value-formatter)
            (lambda (p)
@@ -1232,6 +1240,7 @@
    axis-timer-time
    axis-speed
    axis-pace
+   axis-gap
    axis-speed-zone
    axis-elevation
    axis-corrected-elevation
@@ -1285,7 +1294,12 @@
         axis-swim-distance
         axis-swim-time))
 
+;; NOTE: `findf` returns #f if the series is not found.  We rely on the
+;; contract to check that, as this function is always expected to return a
+;; valid axis definition, and it should always be passed valid series names.
 (define (find-meta-for-series name (is-lap-swimming? #f))
   (findf (lambda (meta) (equal? (send meta series-name) name))
          (if is-lap-swimming? swim-series-meta all-series-meta)))
-(provide find-meta-for-series)
+
+(provide/contract
+ (find-meta-for-series (->* (string?) (boolean?) (is-a?/c series-metadata%))))

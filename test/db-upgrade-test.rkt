@@ -1,6 +1,6 @@
-#lang racket
+#lang racket/base
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2017 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2017, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -12,11 +12,12 @@
 ;; FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
 ;; more details.
 
-(require rackunit)
+(require db
+         racket/file
+         rackunit
+         "../rkt/dbapp.rkt")
+
 ;;(require rackunit/gui)
-(require rackunit/text-ui)
-(require db)
-(require "../rkt/dbapp.rkt")
 
 (define test-dir "./test-db")
 
@@ -39,10 +40,9 @@
   (define version (db-vesion path))
   (define target-version (schema-version))
   (define tmpdb (build-path test-dir "tmp.db"))
-  (check-not-eqv?
-   version target-version
-   (format "~a cannot upgrade from version ~a to ~a~%"
-              (path->string path) version target-version))
+  (check <= version target-version
+         (format "~a cannot upgrade from version ~a to ~a~%"
+                 (path->string path) version target-version))
   (printf "*** ~a: attempt upgrade from version ~a to ~a~%"
           (path->string path) version target-version)
 
@@ -56,7 +56,7 @@
   (define db #f)
   (check-not-exn
    (lambda () (set! db (open-activity-log tmpdb progress-cb))))
-  
+
   (let ((nversion (query-value db "select version from SCHEMA_VERSION")))
     (check-eqv? nversion target-version
                 (format "wrong version after upgrade, expected ~a, got ~a~%"
@@ -65,6 +65,6 @@
     (delete-file tmpdb)))
 
 (module+ test
+  (require rackunit/text-ui)
   (for ((db (in-list (candidate-databases))))
     (test-upgrade db)))
-

@@ -89,7 +89,8 @@
          racket/port
          racket/dict
          "activity-util.rkt"
-         "fit-defs.rkt")
+         "fit-defs.rkt"
+         "../utilities.rkt")
 
 (provide make-fit-data-stream)
 (provide read-fit-records)
@@ -108,8 +109,8 @@
 
 ;............................................................... basics ....
 
-(define (raise-error msg)
-  (raise (cons 'fit-file-error msg)))
+(define (raise-error msg . args)
+  (apply error 'fit-file msg args))
 
 (define (compute-crc buffer [start 0] [end #f])
   ;; Compute the CRC of the bytes in BUFFER between START and END and return
@@ -307,6 +308,8 @@
 
     (define/public (is-eof?) (>= crtpos limit))
 
+    (define/public (position) crtpos)
+
     (define/public (read-next-value type-id [size #f] [big-endian? #f])
       ;; Read a value of the specified type (TYPE-ID) from the stream at the
       ;; current position (which will be updated).
@@ -351,8 +354,7 @@
       ;; at the end of the activity).  We don't support loading HR data from
       ;; such FIT files yet, but at least we can load the swimming part.
       (unless (>= actual expected)
-        (raise-error
-         (format "bad data-length: ~a, expecting ~a" actual expected))))
+        (raise-error "bad data-length: ~a, expecting ~a" actual expected)))
 
     (unless (= (compute-crc buffer) 0)
       (raise-error "bad file CRC"))
@@ -396,7 +398,7 @@
         (list
          'compressed-timestamp
          'data
-         (bitwise-bit-field header 5 6) ; local message id
+         (bitwise-bit-field header 5 7) ; local message id, note that the bit field is open ended! ()
          (bitwise-and header #x1F)      ; timestamp
          ))))
 
@@ -469,18 +471,18 @@
   (lambda (stream)
     (for/list ([field (cdr (cdr definition))])
       (match-define (list name size type) field)
-      (if (>= type 1000)
-          ;; this is a DDI, find the actual type and read it.  Don't do any
-          ;; conversion on i, but use the specified field name for it (if it
-          ;; is available)
-          (let ()
-            (match-define (list dname dtype)
-              (hash-ref dev-field-types
-                        (cons type name)
-                        (lambda () (raise-error (format "Unknown dev field: ~a" (- type 1000))))))
-            (cons (or dname name) (read-value-fn dtype size stream)))
-          (let ((value (read-value-fn type size stream)))
-            (cons name (and value (convert-value value name conversion-table))))))))
+      (cond ((>= type 1000)
+             ;; this is a DDI, find the actual type and read it.  Don't do any
+             ;; conversion on i, but use the specified field name for it (if
+             ;; it is available)
+             (match-let (((list dname dtype)
+                          (hash-ref dev-field-types
+                                    (cons type name)
+                                    (lambda () (raise-error "unknown dev field: ~a" (- type 1000))))))
+               (cons (or dname name) (read-value-fn dtype size stream))))
+            (#t
+             (let ((value (read-value-fn type size stream)))
+               (cons name (and value (convert-value value name conversion-table)))))))))
 
 (define (read-fit-records fit-stream dispatcher)
   ;; Read all data records from FIT-STREAM (a fit-data-stream%) and send them
@@ -498,8 +500,9 @@
       (and n (string->symbol (bytes->string/latin-1 n)))))
 
   (define (read-next-record)
-    (let ((header (let ((hdr (send fit-stream read-next-value 'uint8)))
-                    (decode-record-header hdr))))
+    (let* ((hdr (or (send fit-stream read-next-value 'uint8) 255))
+           (header (decode-record-header hdr)))
+      ;; (printf "header(~a pos = ~a): ~a~%" hdr (send fit-stream position) header)
       (match-define (list htype def-or-data local-id rest ...) header)
       (cond ((eq? def-or-data 'definition)
              (let ((def (read-message-definition fit-stream (car rest))))
@@ -515,10 +518,11 @@
             ((eq? def-or-data 'data)
              (let ((reader (hash-ref message-readers local-id #f)))
                (unless reader
-                 (raise-error (format "no reader for local message id ~a" header)))
-               ; (display (format "DATA local: ~a (~a)~%" (third header) (car reader)))
+                 (raise-error "no reader for local message id ~a" header))
+               ;; (display (format "DATA local: ~a (~a)~%" (third header) (car reader)))
                (let ((message-id (car reader))
                      (message-data ((cdr reader) fit-stream)))
+                 ;; (printf "DATA CONTENTS: ~a~%" message-data)
                  (cond ((eq? message-id 'developer-data-id)
                         #f)
                        ((eq? message-id 'field-description)
@@ -537,7 +541,7 @@
                            (cons (cons 'compressed-timestamp (car rest)) message-data)
                            message-data)))))
             (#t
-             (raise-error (format "bad header: ~a" header))))))
+             (raise-error "bad header: ~a" header)))))
 
   (define (loop)
     (unless (send fit-stream is-eof?)
@@ -570,28 +574,38 @@
     (define current-timestamp #f)
 
     (define (update-timestamp record)
-      ;; Update start-timestamp, current-timestamp from the current RECORD.
+
+      ;; Update start-timestamp, current-timestamp from the current RECORD,
+      ;; taking special care not to move the time backwards.
+      (let ((ts (dict-ref record 'timestamp current-timestamp)))
+        (if (equal? ts *fit-epoch*)    ; somebody just wrote a 0 for the timestamp!
+            (when current-timestamp
+              (set! record (cons (cons 'timestamp current-timestamp) record)))
+            (set! current-timestamp
+                  (if current-timestamp (max ts current-timestamp) ts))))
+
+      (unless start-timestamp
+        (set! start-timestamp current-timestamp))
+
+      (let ((st (dict-ref record 'start-time #f)))
+        (when (and (or (not st) (equal? st *fit-epoch*)) current-timestamp)
+          (set! record (cons (cons 'start-time current-timestamp) record))))
+
       ;; If the record has a compressed-timestamp, add a real timestamp field
-      ;; to it first.
-      (let ((record (cond ((assq 'compressed-timestamp record)
-                           => (lambda (ts)
-                                (if current-timestamp
-                                    (cons (cons 'timestamp (+ (cdr ts) current-timestamp))
-                                          record)
-                                    record)))
-                          (#t record))))
-
-        (let ((new-timestamp (cond ((assq 'timestamp record) => cdr)
-                                   (#t current-timestamp))))
-          ;; Don't allow time to go backwards
-          (set! current-timestamp
-                (if current-timestamp
-                    (max new-timestamp current-timestamp)
-                    new-timestamp)))
-        (unless start-timestamp
-          (set! start-timestamp current-timestamp))
-
-        record))
+      ;; to it.
+      (if (and current-timestamp (assq 'compressed-timestamp record))
+          ;; NOTE: the compressed timestamp is 5 bits (0-31) and it replaces
+          ;; the bottom 5 bits of the current timestamp, we DON'T simply add
+          ;; the offset to the current timestamp.  To make things more
+          ;; complicated, we also need to account for rollover.
+          (let* ((offset (cdr (assq 'compressed-timestamp record)))
+                 (bottom-bits (bitwise-and current-timestamp #x1F))
+                 (new-ts (if (>= offset bottom-bits)
+                             (+ (- current-timestamp bottom-bits) offset)
+                             ;; timestamp rolled over, take that into account
+                             (+ (- current-timestamp bottom-bits) offset #x20))))
+            (cons (cons 'timestamp new-ts) record))
+          record))
 
     (define/public (get-start-timestamp) start-timestamp)
     (define/public (get-current-timestamp) current-timestamp)
@@ -816,8 +830,6 @@
       #t)
 
     (define/override (on-session session)
-      ;; (display (format "*** SESSION ~a~%" (dict-ref session 'timestamp #f)))
-
       ;; Session records can come before the lap records (Garmin Swim), so we
       ;; cannot collect the laps when we see a session.  Instead we just save
       ;; it and process it in collect-activity.
@@ -844,12 +856,28 @@
       #t)
 
     (define/override (on-record record)
+      <<<<<<< HEAD
       ;; (display (format "*** RECORD ~a~%" (dict-ref record 'timestamp #f)))
       (set! records (cons (replace-native-fields (process-fields record)) records))
       ;; (when display-next-record
       ;;   (display record)(newline)
       ;;   (set! display-next-record #f))
+      =======
+      (define precord (replace-native-fields (process-fields record)))
+      (if (null? records)
+          (set! records (cons precord records))
+          ;; Check if this record has the same timestamp as the last one.
+          ;; Some devices record several data points in different records with
+          ;; the same timestamp.
+          (let ((last-record (car records)))
+            (if (equal? (dict-ref precord 'timestamp #f)
+                        (dict-ref last-record 'timestamp #t))
+                ;; Merge the records, as they share timestamps
+                (set! records (cons (append precord last-record) (cdr records)))
+                (set! records (cons precord records)))))
+      >>>>>>> master
       #t)
+
 
     (define/override (on-length length)
       ;; (display (format "*** LENGTH ~a~%" (dict-ref length 'timestamp #f)))
@@ -861,8 +889,6 @@
       #t)
 
     (define/override (on-lap lap)
-      ;; (display (format "*** LAP ~a~%" (dict-ref lap 'timestamp #f)))
-
       ;; Reconstructing the track points of the lap is a bit tricky and seems
       ;; to be device specific.  The Garmin Swim FIT file is contrary to the
       ;; FIT file specification.
@@ -877,19 +903,16 @@
                      ;; Easy case (we hope), just a lap with no aditional
                      ;; data.
                      data)
-
                     ((null? lengths)
                      ;; Easy case, there were no lengths.  Construct a dummy
-                     ;; lenght and assign all records to it.
-                     (let ((records (reverse records))
-                           (timestamp (dict-ref (car records) 'timestamp #f)))
-
+                     ;; length and assign all records to it.  The length will
+                     ;; have the same data fields (total-timer-time, etc) as
+                     ;; the lap.
+                     (let ((records (reverse records)))
                        (cons
                         (cons 'lengths
                               (list
-                               (list                  ; the length
-                                (cons 'timestamp timestamp)
-                                (cons 'track records))))
+                               (cons (cons 'track records) data)))
                         data)))
                     ((= (length lengths) (length records))
                      ;; The Garmin Swim generates a LENGTH record for each
@@ -926,129 +949,152 @@
                                     (cons 'lengths (map add-length-records lengths))
                                     data)))
                          (when (> (length records) 0)
+                           <<<<<<< HEAD
                            (display "WARNING: remaining records after processing LENGTHS")
                            (newline))
-                         data)))))
+                         =======
+                         (dbglog "fit-file: remaining records after processing LENGTHS"))
+                       >>>>>>> master
+                       data)))))
 
-        (set! records '())
-        (set! lengths '())
-        (set! laps (cons data laps)))
-      #t)
+      (set! records '())
+      (set! lengths '())
+      (set! laps (cons data laps)))
+    #t)
 
-    (define/override (on-device-info device-info)
-      ;; (display (format "*** DEVICE-INFO ~a~%" device-info))
-      ;; (let ((index (cond ((assq 'device-index device-info) => cdr)
-      ;;                    (#t #f))))
-      ;;   (when index (hash-set! devices index device-info)))
-      (set! devices (cons device-info devices))
-      #t)
+  (define/override (on-device-info device-info)
+    ;; (display (format "*** DEVICE-INFO ~a~%" device-info))
+    ;; (let ((index (cond ((assq 'device-index device-info) => cdr)
+    ;;                    (#t #f))))
+    ;;   (when index (hash-set! devices index device-info)))
+    (set! devices (cons device-info devices))
+    #t)
 
-    (define/override (on-training-file tf)
-      (set! training-file (cons tf training-file)))
+  (define/override (on-training-file tf)
+    (set! training-file (cons tf training-file)))
 
-    (define/override (on-sport data)
-      (set! sport data))
+  (define/override (on-sport data)
+    (set! sport data))
 
-    (define/override (on-event event)
-      (let ((timestamp (dict-ref event 'timestamp #f))
-            (e (dict-ref event 'event #f))
-            (type (dict-ref event 'event-type #f)))
+  (define/override (on-event event)
+    (let ((timestamp (dict-ref event 'timestamp #f))
+          (e (dict-ref event 'event #f))
+          (type (dict-ref event 'event-type #f)))
 
-        (cond
-          ((eq? e 'timer)
-           (cond ((eq? type 'stop-all)
-                  ;; (when (pair? records)
-                  ;;   (display (car records))(newline))
-                  (set! timer-stopped #t)
-                  (set! timer-stop-timestamp timestamp))
-                 ((eq? type 'start)
-                  (when timer-stopped
-                    (set! display-next-record #t)
-                    ;; (display (format "*** PAUSE ~a seconds~%" (- timestamp timer-stop-timestamp)))
-                    (set! timer-stopped #f)))
-                 (#t
-                  ;; (display (format "*** Unknown timer event ~a~%" event))
-                  #t)))
-          ((eq? e 'session)              ; not interested in these ones
-           #t)
-          (#t
-           ;; (display (format "*** EVENT: ~a~%" event))
-           )))
-      #t)
+      (cond
+        ((eq? e 'timer)
+         (cond ((eq? type 'stop-all)
+                ;; (when (pair? records)
+                ;;   (display (car records))(newline))
+                (set! timer-stopped #t)
+                (set! timer-stop-timestamp timestamp))
+               ((eq? type 'start)
+                (when timer-stopped
+                  (set! display-next-record #t)
+                  ;; (display (format "*** PAUSE ~a seconds~%" (- timestamp timer-stop-timestamp)))
+                  (set! timer-stopped #f)))
+               (#t
+                ;; (display (format "*** Unknown timer event ~a~%" event))
+                #t)))
+        ((eq? e 'session)              ; not interested in these ones
+         #t)
+        (#t
+         ;; (display (format "*** EVENT: ~a~%" event))
+         )))
+    #t)
 
-    (define/override (on-developer-data-id data)
-      (set! developer-data-ids (cons data developer-data-ids)))
+  (define/override (on-developer-data-id data)
+    (set! developer-data-ids (cons data developer-data-ids)))
 
-    (define/override (on-field-description data)
-      ;; Add a mapping from the native field number to this developer field,
-      ;; if there is one.  NOTE: we currently rely on the fact that developer
-      ;; field names are unique and don't conflict with other fields, this
-      ;; probably works with existing devices today.
-      (let ((native-msg (dict-ref data 'native-msg-num #f))
-            (native-field (dict-ref data 'native-field-num #f))
-            (name (dict-ref data 'field-name #f)))
-        (when (and name native-field native-msg
-                   (eq? 'record (dict-ref *global-message-number* native-msg #f)))
-          (let ((nname (dict-ref *record-fields* native-field #f)))
-            (when nname
-              (let ((sym (string->symbol (bytes->string/utf-8 name))))
-                (set! native-to-dev (cons (cons nname sym) native-to-dev)))))))
+  (define/override (on-field-description data)
+    ;; Add a mapping from the native field number to this developer field,
+    ;; if there is one.  NOTE: we currently rely on the fact that developer
+    ;; field names are unique and don't conflict with other fields, this
+    ;; probably works with existing devices today.
+    (let ((native-msg (dict-ref data 'native-msg-num #f))
+          (native-field (dict-ref data 'native-field-num #f))
+          (name (dict-ref data 'field-name #f)))
+      (when (and name native-field native-msg
+                 (eq? 'record (dict-ref *global-message-number* native-msg #f)))
+        (let ((nname (dict-ref *record-fields* native-field #f)))
+          (when nname
+            (let ((sym (string->symbol (bytes->string/utf-8 name))))
+              (set! native-to-dev (cons (cons nname sym) native-to-dev)))))))
 
-      (set! field-descriptions (cons data field-descriptions)))
+    (set! field-descriptions (cons data field-descriptions)))
 
-    (define/public (display-devices)
-      (for ((v (in-list (reverse devices))))
-        (display "*** ")(display v)(newline)))
+  (define/public (display-devices)
+    (for ((v (in-list (reverse devices))))
+      (display "*** ")(display v)(newline)))
 
-    (define/public (collect-activity)
+  (define/public (collect-activity)
 
-      (define (add-session-laps session)
-        (let ((timestamp (dict-ref session 'timestamp #f)))
-          (let-values ([(our-laps rest)
-                        (splitf-at laps
-                                   (lambda (v)
-                                     (<= (dict-ref v 'timestamp #f) timestamp)))])
-            (set! laps rest)            ; will be used by the next session
-            (cons (cons 'laps our-laps) session))))
+    ;; File has one session which has the same timestamp as start-time --
+    ;; this means that no records/laps will be collected in it (timestamp is
+    ;; supposed to mark the end of the session).  We patch the session in
+    ;; this case.
+    (when (= (length sessions) 1)
+      (let ((the-session (car sessions)))
+        (when (equal? (dict-ref the-session 'timestamp #f)
+                      (dict-ref the-session 'start-time #f))
+          (set! sessions (list (cons (cons 'timestamp (get-current-timestamp))
+                                     the-session))))))
 
-      (when (or (> (length records) 0)
-                (> (length lengths) 0))
-        (display (format "WARNING: records and lengths wihtout enclosing lap~%"))
-        (on-lap `((timestamp . ,(get-current-timestamp))))
-        ;; Compute the summary data for the newly added lap
-        (let ((new-lap (car laps)))
-          (set! new-lap (append (compute-summary-data '() '() (list new-lap) '())
-                                new-lap))
-          (set! laps (cons new-lap (cdr laps)))))
+    (define (add-session-laps session)
+      (let ((timestamp (dict-ref session 'timestamp #f)))
+        (let-values ([(our-laps rest)
+                      (splitf-at laps
+                                 (lambda (v)
+                                   (<= (dict-ref v 'timestamp #f) timestamp)))])
+          (set! laps rest)            ; will be used by the next session
+          (cons (cons 'laps our-laps) session))))
 
-      (set! laps (reverse laps))        ; put them in chronological order
+    (when (or (> (length records) 0)
+              (> (length lengths) 0))
+      <<<<<<< HEAD
+      (display (format "WARNING: records and lengths wihtout enclosing lap~%"))
+      =======
+      (dbglog "fit-file: records and lengths without enclosing lap")
+      >>>>>>> master
+      (on-lap `((timestamp . ,(get-current-timestamp))))
+      ;; Compute the summary data for the newly added lap
+      (let ((new-lap (car laps)))
+        (set! new-lap (append (compute-summary-data '() '() (list new-lap) '())
+                              new-lap))
+        (set! laps (cons new-lap (cdr laps)))))
 
-      (let ((sessions (reverse (map add-session-laps (reverse sessions)))))
-        (when (> (length laps) 0)
-          (display (format "WARNING: laps outisde a session~%"))
-          (let ((new-session (add-session-laps `((timestamp . ,(get-current-timestamp))
-                                                 ('sport . 'generic)))))
-            (set! new-session (append (compute-summary-data '() '() '() (list new-session))
-                                      new-session))
-            (set! sessions (cons new-session sessions))))
+    (set! laps (reverse laps))        ; put them in chronological order
 
-        (unless (null? devices)
-          ;; extra devices found (Garmin Swim does this, add them to the
-          ;; last session.  NOTE: this is a hack, we don't check if there
-          ;; are other devices attached to the last session.
-          (let ((last-session (car sessions)))
-            (set! sessions (cons (cons (cons 'devices devices) last-session)
-                                 (cdr sessions)))))
+    (let ((sessions (reverse (map add-session-laps (reverse sessions)))))
+      (when (> (length laps) 0)
+        <<<<<<< HEAD
+        (display (format "WARNING: laps outisde a session~%"))
+        =======
+        (dbglog "fit-file: laps outisde a session")
+        >>>>>>> master
+        (let ((new-session (add-session-laps `((timestamp . ,(get-current-timestamp))
+                                               ('sport . 'generic)))))
+          (set! new-session (append (compute-summary-data '() '() '() (list new-session))
+                                    new-session))
+          (set! sessions (cons new-session sessions))))
 
-        (list
-         (cons 'start-time (or activity-timestamp (get-start-timestamp)))
-         (cons 'guid activity-guid)
-         (cons 'developer-data-ids developer-data-ids)
-         (cons 'field-descriptions field-descriptions)
-         (cons 'training-file training-file)
-         (cons 'sessions (reverse sessions)))))
+      (unless (null? devices)
+        ;; extra devices found (Garmin Swim does this, add them to the
+        ;; last session.  NOTE: this is a hack, we don't check if there
+        ;; are other devices attached to the last session.
+        (let ((last-session (car sessions)))
+          (set! sessions (cons (cons (cons 'devices devices) last-session)
+                               (cdr sessions)))))
 
-    ))
+      (list
+       (cons 'start-time (or activity-timestamp (get-start-timestamp)))
+       (cons 'guid activity-guid)
+       (cons 'developer-data-ids developer-data-ids)
+       (cons 'field-descriptions field-descriptions)
+       (cons 'training-file training-file)
+       (cons 'sessions (reverse sessions)))))
+
+  ))
 
 (define (read-activity-from-file file)
   ;; Convenience function to read an activity from a file.
@@ -1289,7 +1335,7 @@
 
     ;; The index of each workout step.  This is automatically managed by the
     ;; class, but reading it is usefull when adding repeat steps, as they need
-    ;; the mesasage index to jump to.
+    ;; the message index to jump to.
     (define message-index 0)
     (define/public (get-next-message-index) message-index)
 
