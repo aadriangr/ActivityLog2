@@ -271,41 +271,6 @@
 
   df)
 
-(define xdata-values-query
-  "select T.timestamp, XV.field_id, XV.val
-  from XDATA_VALUE XV,
-       A_TRACKPOINT T,
-       A_LENGTH L,
-       A_LAP P
- where XV.trackpoint_id = T.id
-   and T.length_id = L.id
-   and L.lap_id = P.id
-  and P.session_id = ?
-order by T.timestamp")
-
-(define (read-xdata-series df db)
-
-  (define sid (df-get-property df 'session-id))
-  (define current-ts #f)
-  (define position #f)
-  (define xdata-series (make-hash))
-
-  (for (([ts field value] (in-query db xdata-values-query sid)))
-    (unless (equal? current-ts ts)
-      (set! current-ts ts)
-      (set! position (df-index-of df "timestamp" ts)))
-    (define xdata (hash-ref xdata-series field #f))
-    (unless xdata
-      (set! xdata (make-vector (df-row-count df) #f))
-      (hash-set! xdata-series field xdata))
-    (vector-set! xdata position value))
-
-  (for ([(key value) (in-hash xdata-series)])
-    ;; TODO: we need better names for the xdata series
-    (define series (make-series (format "xdata-~a" key) #:data value))
-    (df-add-series df series)))
-
-
 (define (add-timer-series df)
   (when (df-contains? df "timestamp")
     (define stop-points '())
