@@ -25,13 +25,22 @@ create table if not exists XDATA_APP (
 
 create index if not exists IX0_XDATA_APP on XDATA_APP(app_guid);
 
-create table if not exists XDATA_FIELD (
+create table XDATA_FIELD (
   id integer not null primary key autoincrement,
   app_id integer not null,
   name text not null,
   unit_name text,
   native_message integer,
   native_field integer,
+  headline text,
+  axis_label text,
+  series_name text,
+  fractional_digits integer,
+  missing_value real,
+  histogram_bucket_slot real,
+  inverted_mean_max boolean,
+  should_filter boolean,
+  color text,
   foreign key (app_id) references XDATA_APP(id)
 );
 

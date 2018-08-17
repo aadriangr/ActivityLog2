@@ -2,7 +2,7 @@
 ;; view-session.rkt -- view information about a sesion (graphs, laps, etc)
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -26,8 +26,7 @@
          "../database.rkt"
          "../dialogs/activity-edit.rkt"
          "../fit-file/activity-util.rkt"
-         "../series-meta.rkt"
-         "../session-df.rkt"
+         "../session-df/session-df.rkt"
          "../sport-charms.rkt"
          "../utilities.rkt"
          "../widgets/main.rkt"
@@ -92,7 +91,7 @@
 		       [stretchable-height #f]
 		       [alignment '(left top)]))
 
-    (define session-title 
+    (define session-title
       (new message% [parent panel]
            [label "Untitled"]
            [stretchable-width #t]
@@ -105,7 +104,7 @@
            [stretchable-width #t]
            [font *title-font*]))
 
-    (define start-time 
+    (define start-time
       (new message% [parent panel]
            [stretchable-width #t]
            [font *label-font*]
@@ -123,7 +122,7 @@
          [label "Activity type:"]
          [font *label-font*])
 
-    (define sport-name 
+    (define sport-name
       (new message% [parent sport-panel]
            [stretchable-width #t]
            [label "Other"]
@@ -205,7 +204,7 @@
 
     (define (switch-to-view-mode)
       (set! is-editing? #f)
-      (send sport-icon set-label 
+      (send sport-icon set-label
             (get-sport-bitmap-colorized sport sub-sport))
       (send sport-name set-label (get-sport-name sport sub-sport))
       (send session-title set-label headline)
@@ -272,7 +271,7 @@ update A_SESSION set name = ?, sport_id = ?, sub_sport_id = ?
 
     (define header (new session-header% [parent session-panel]))
 
-    (define detail-panel 
+    (define detail-panel
       (new tab-panel%
            [stretchable-height #t]
            [choices '("* None *")]
@@ -308,7 +307,7 @@ update A_SESSION set name = ?, sport_id = ?, sub_sport_id = ?
     (define model-params
       (make-tdata "Model Params" detail-panel
                   (lambda (panel) (new model-parameters-panel% [parent panel]))))
-    
+
     (define installed-tabs '())
 
     (define session-id #f)
@@ -363,7 +362,7 @@ update A_SESSION set name = ?, sport_id = ?, sub_sport_id = ?
         (send detail-panel set (map tdata-name installed-tabs)))
 
       (collect-garbage 'major))
-    
+
     (define/public (set-session sid)
       (set! generation (add1 generation))
       (set! session-id sid)
@@ -387,7 +386,7 @@ update A_SESSION set name = ?, sport_id = ?, sub_sport_id = ?
       (let ((tabs (list overview)))
         (set! installed-tabs (reverse tabs))
         (send detail-panel set (map tdata-name installed-tabs)))
-      
+
       (send detail-panel set-selection 0)
       (switch-tabs 0)
       (collect-garbage 'major))
@@ -454,7 +453,7 @@ update A_SESSION set name = ?, sport_id = ?, sub_sport_id = ?
 
     ;; Activity operations interface implementation
 
-    (define/public (get-top-level-window) 
+    (define/public (get-top-level-window)
       (send session-panel get-top-level-window))
     (define/public (get-database) the-database)
 
@@ -462,9 +461,9 @@ update A_SESSION set name = ?, sport_id = ?, sub_sport_id = ?
     (define/public (get-selected-guid)
       (if session-id
           (query-maybe-value
-           the-database 
+           the-database
            "select A.guid
-              from ACTIVITY A, A_SESSION S 
+              from ACTIVITY A, A_SESSION S
              where S.activity_id = A.id and S.id = ?"
            session-id)
           #f))

@@ -3,7 +3,7 @@
 ;; trends-hist.rkt -- aggregate histogram chart
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2016 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2016, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -30,12 +30,14 @@
  "../widgets/main.rkt"
  "../plot-hack.rkt"
  "../al-widgets.rkt"
- "../series-meta.rkt"
+ "../session-df/native-series.rkt"
+ "../session-df/series-metadata.rkt"
  "../metrics.rkt"
  "../utilities.rkt"
  "../plot-util.rkt"
  "../fmt-util.rkt"
- "../data-frame/histogram.rkt")
+ "../data-frame/histogram.rkt"
+ "../sport-charms.rkt")
 
 (provide hist-trends-chart%)
 
@@ -160,7 +162,7 @@
                                 [parent (send this get-client-pane)]
                                 [database database]
                                 [sport-selected-callback on-sport-selected]))
-    
+
     (define series-gb (make-group-box-panel (send this get-client-pane)))
     (set! series-selector
           (let ((p (make-horizontal-pane series-gb #f)))
@@ -297,7 +299,7 @@
          ;; Series can be "lteff+rteff" for dual series!
          (series (string-split (hist-params-series params) "+")))
     (hist
-     (for/list ([s series]) (find-meta-for-series s (is-lap-swimming? (hist-params-sport params))))
+     (for/list ([s series]) (find-series-metadata s (is-lap-swimming? (hist-params-sport params))))
      (for/list ([s series]) (aggregate-hist candidates s #:progress-callback progress)))))
 
 ;; Prepare a histogram ready for rendering or export based on histogram DATA
@@ -329,7 +331,7 @@
                                     #:include-zeroes? zeroes?
                                     #:bucket-width bwidth2
                                     #:as-percentage? aspct?)))
-  
+
   (when (> (hist-params-otrim params) 0)
     (let ((trim (/ (hist-params-otrim params) 100)))
       (when h1
@@ -460,7 +462,7 @@
     (define (plot-hover-callback snip event x y)
       (define renderers '())
       (define (add-renderer r) (set! renderers (cons r renderers)))
-      
+
       (when (and (good-hover? x y event) cached-data histogram-data)
         (define dual? (>= (length (hist-axis cached-data)) 2))
         (define params (send this get-params))

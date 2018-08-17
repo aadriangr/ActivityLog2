@@ -2,7 +2,7 @@
 ;; time-in-zone.rkt -- time spent in each sport zone for a session
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -23,9 +23,9 @@
          "data-frame/df.rkt"
          "data-frame/statistics.rkt"
          "data-frame/histogram.rkt"
-         "session-df.rkt"
+         "session-df/session-df.rkt"
          "widgets/main.rkt"
-         "hrv.rkt"
+         "session-df/hrv.rkt"
          "dialogs/edit-session-tss.rkt")
 
 (provide update-time-in-zone-data)
@@ -130,7 +130,7 @@ select P.id
   from A_LAP P
  where P.session_id = ?
  order by P.start_time")))
-  
+
 ;; Update the TIME_IN_ZONE table with data for a session.  Both heart rate and
 ;; power zones are updated (if available).  Previous data for this session is
 ;; deleted.
@@ -180,7 +180,7 @@ select P.id
       (define metrics (compute-hrv-metrics hrv))
       (when metrics
         (put-hrv-metrics metrics sid db)))
-    
+
     ))
 
 ;; Update the time in zone information for all sessions in the database.
@@ -209,6 +209,5 @@ select P.id
             (raise e))))
         (update-time-in-zone-data sid database)))
     (dbglog "interactive-update-time-in-zone-data complete"))
-  
-  (send progress-dialog run parent-window task))
 
+  (send progress-dialog run parent-window task))

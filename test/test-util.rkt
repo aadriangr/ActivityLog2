@@ -15,13 +15,15 @@
 
 (require db/base
          racket/list
+         racket/class
          rackunit
          "../rkt/data-frame/df.rkt"
          "../rkt/database.rkt"
          "../rkt/dbapp.rkt"
          "../rkt/import.rkt"
          "../rkt/intervals.rkt"
-         "../rkt/session-df.rkt")
+         "../rkt/session-df/session-df.rkt"
+         "../rkt/session-df/series-metadata.rkt")
 
 (define (with-database thunk)
   (let ((db (open-activity-log 'memory)))
@@ -57,6 +59,16 @@
   ;; stride and pace.
   (for ([s (in-list sn)] #:unless (member s '("stride" "pace")))
     (check-true (df-has-non-na? df s) (format "empty series found: ~a" s)))
+  ;; Check that metadata objects exist for all series (except a select few).
+  ;; This is especially important since metadata objects for XDATA series are
+  ;; created when the first such series is read in.
+  (define lap-swim? (df-get-property df 'is-lap-swim?))
+  (for ([s (in-list sn)]
+        #:unless (member s (if lap-swim?
+                               '("timestamp" "timer" "duration" "swim_stroke" "speed" "spd" "dst")
+                               '("timestamp" "lat" "lon" "dst" "spd" "gaspd"))))
+    (define metadata (find-series-metadata s lap-swim?))
+    (check-true (is-a? metadata series-metadata%) (format "missing metadata for ~a" sn)))
   ;; Remove the common series
   (set! sn (remove "timestamp" sn))
   (set! sn (remove "timer" sn))

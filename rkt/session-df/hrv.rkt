@@ -4,7 +4,7 @@
 ;; files.
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2016 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2016, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -30,10 +30,10 @@
  racket/dict
  math/statistics
  db/base
- "data-frame/df.rkt"
- "data-frame/series.rkt"
- "fit-file/fit-file.rkt"
- "database.rkt"
+ "../data-frame/df.rkt"
+ "../data-frame/series.rkt"
+ "../fit-file/fit-file.rkt"
+ "../database.rkt"
  )
 
 (provide/contract
@@ -62,7 +62,7 @@
     vec))
 
 ;; Builder class to construct a HRV data frame from a FIT file.
-(define hrv-data-frame-builder% 
+(define hrv-data-frame-builder%
   (class fit-event-dispatcher%
     (init)
     (init-field [start-timestamp #f] [end-timestamp #f])
@@ -86,7 +86,7 @@
       (let ((bpm (dict-ref data 'heart-rate #f)))
         (when bpm
           (set! current-bpm bpm))))
-    
+
     ;; NOTE: hrv values are in milliseconds
     (define/override (on-hrv data)
       (let ((ts (send this get-current-timestamp))
@@ -96,7 +96,7 @@
             (set! timestamps (cons ts timestamps))
             (set! hrv-samples (cons hrv hrv-samples))
             (set! bpm-samples (cons current-bpm bpm-samples))))))
-    
+
     (define (make-df)
       (let* ((ts (list->vector-rev timestamps))
              (bpm (list->vector-rev bpm-samples))
@@ -192,7 +192,7 @@
 ;; Holds various metrics related to HRV, see
 ;; https://en.wikipedia.org/wiki/Heart_rate_variability
 (struct hrv-metrics
-  
+
   (sdnn      ; STDDEV of NN intervals (hrv samples)
    rmssd     ; root mean square of successive differences (delta-hrv)
    sdsd      ; STDDEV of successive differences (delta-hrv)
@@ -259,16 +259,16 @@
 (define insert-session-hrv-stmt
   (virtual-statement
    (lambda (dbsys)
-     "insert into SESSION_HRV(sdnn, rmssd, sdsd, nn50, nn20, 
+     "insert into SESSION_HRV(sdnn, rmssd, sdsd, nn50, nn20,
                               good_samples, bad_samples, session_id)
       values(?, ?, ?, ?, ?, ?, ?, ?)")))
 
 (define update-session-hrv-stmt
   (virtual-statement
    (lambda (dbsys)
-     "update SESSION_HRV 
-         set sdnn = ?, rmssd = ?, sdsd = ?, 
-             nn50 = ?, nn20 = ?, 
+     "update SESSION_HRV
+         set sdnn = ?, rmssd = ?, sdsd = ?,
+             nn50 = ?, nn20 = ?,
              good_samples = ?, bad_samples = ?
        where session_id = ?")))
 

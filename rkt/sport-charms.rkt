@@ -2,7 +2,7 @@
 ;; sport-charms.rkt -- utilities related to individual sports
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -21,8 +21,12 @@
          racket/draw
          racket/list
          racket/runtime-path
+         racket/match
+         racket/async-channel
+         racket/math
          "dbapp.rkt"
          "dbutil.rkt"
+         "utilities.rkt"
          "color-theme.rkt")
 
 (define (color? c) (is-a? c color%))
@@ -72,6 +76,13 @@
 (provide
  val->pct-of-max
  val->zone)
+
+(provide is-runnig?
+         is-cycling?
+         is-lap-swimming?
+         is-swimming?
+         zone->label
+         sport-zones)
 
 
 ;;...................................................... get-sport-color ....
@@ -127,7 +138,7 @@
 (define (init-sport-charms db)
 
   (let ((h (make-hash)))
-    (for (((id name icon) 
+    (for (((id name icon)
            (in-query db "select id, name, icon from E_SPORT where id != 254")))
       (hash-set! h id (sport-info id #f name icon)))
     (set! *sport-info* h))
@@ -137,7 +148,7 @@
            (in-query db "select id, sport_id, name, icon from E_SUB_SPORT where id != 254")))
       (hash-set! h id (sport-info id parent-id name icon)))
     (set! *sub-sport-info* h))
-  
+
   (let ((h (make-hash)))
     (for (((id name)
            (in-query db "select id, name from E_SWIM_STROKE")))
@@ -151,15 +162,36 @@
                                 sport-names))
         (for ((sub-sport (in-hash-values *sub-sport-info*)))
           (when (eqv? (sport-info-id sport) (sport-info-parent-id sub-sport))
-            (set! sport-names (cons (vector 
+            (set! sport-names (cons (vector
                                      (sport-info-name sub-sport)
                                      (sport-info-id sport) (sport-info-id sub-sport))
                                     sport-names)))))
       (set! *sport-names* (reverse sport-names)))))
 
-(add-db-open-callback init-sport-charms)
+(define (maybe-init-sport-charms)
+  (unless *sport-info*
+    (init-sport-charms (current-database))))
+
+;; monitor database opened messages and init the sport charms from the new
+;; database.
+(define dummy
+  (let ((s (make-log-event-source)))
+    (thread/dbglog
+     #:name "sport-charms/init-database"
+     ;; NOTE there might be multi threading race conditions here...
+     (lambda ()
+       (let loop ((item (async-channel-get s)))
+         (when item
+           (match-define (list tag data) item)
+           (when (eq? tag 'database-opened)
+             (set! *sport-info* #f)
+             (set! *sub-sport-info* #f)
+             (set! *swim-stroke-names* #f)
+             (set! *sport-names* '()))
+           (loop (async-channel-get s))))))))
 
 (define (get-sport-info sport sub-sport)
+  (maybe-init-sport-charms)
   (if (or (not sub-sport) (= sub-sport 0))
       (if (hash? *sport-info*)
           (hash-ref *sport-info* sport #f)
@@ -182,7 +214,7 @@
 
 (define (get-sport-bitmap sport sub-sport)
   (let ((info (get-sport-info sport sub-sport)))
-    (hash-ref *large-bitmaps* 
+    (hash-ref *large-bitmaps*
               (if info (sport-info-icon info) *default-bitmap*)
               (hash-ref *large-bitmaps* *default-bitmap*))))
 
@@ -198,15 +230,17 @@
                                       (+ (pict-height b) 10)
                                       -0.05
                                       #:draw-border? #f)))
-    (pict->bitmap 
+    (pict->bitmap
      (cc-superimpose (colorize r (get-sport-color sport sub-sport)) b))))
 
 (define (get-swim-stroke-name swim-stroke-id)
+  (maybe-init-sport-charms)
   (hash-ref *swim-stroke-names*
             swim-stroke-id
             "Unknown"))
 
 (define (get-swim-stroke-names)
+  (maybe-init-sport-charms)
   (for/list (((k v) (in-hash *swim-stroke-names*)))
     (cons k v)))
 
@@ -215,6 +249,7 @@
         (#t "gray")))
 
 (define (get-sport-names)
+  (maybe-init-sport-charms)
   *sport-names*)
 
 ;; Implementation detail: We add the "generic" sports to the list if any of
@@ -222,6 +257,7 @@
 ;; 17) we add the "Swimming" activity (5, #f)
 
 (define (get-sport-names-in-use)
+  (maybe-init-sport-charms)
   (let ((in-use (query-rows (current-database) "select distinct S.sport_id, S.sub_sport_id from A_SESSION S")))
     (filter (lambda (s)
               (let ((sport (vector-ref s 1))
@@ -232,7 +268,7 @@
                                    (u-sub-sport (vector-ref u 1)))
                                (set! u-sport (if (sql-null? u-sport) #f u-sport))
                                (set! u-sub-sport (if (sql-null? u-sub-sport) #f u-sub-sport))
-                               (and (eq? sport u-sport) 
+                               (and (eq? sport u-sport)
                                     (or (eq? sub-sport #f)
                                         (eq? sub-sport u-sub-sport)))))
                            in-use))))
@@ -242,29 +278,29 @@
 
   ;; Use most recent zone, if none was specified
   (unless timestamp (set! timestamp (current-seconds)))
-  
+
   (define q1 "
-select max(zone_id) from V_SPORT_ZONE 
- where sport_id = ? 
-   and sub_sport_id = ? 
+select max(zone_id) from V_SPORT_ZONE
+ where sport_id = ?
+   and sub_sport_id = ?
    and zone_metric_id = ?
    and ? between valid_from and valid_until")
 
   (define q2 "
-select max(zone_id) from V_SPORT_ZONE 
- where sport_id = ? 
-   and sub_sport_id is null 
+select max(zone_id) from V_SPORT_ZONE
+ where sport_id = ?
+   and sub_sport_id is null
    and zone_metric_id = ?
    and ? between valid_from and valid_until")
 
   (define (get-zid)
     (cond ((and sport sub-sport)
-           (or (query-maybe-value 
+           (or (query-maybe-value
                 (current-database) q1 sport sub-sport zone-metric timestamp)
                (query-maybe-value
                 (current-database) q2 sport zone-metric timestamp)))
           (sport
-           (query-maybe-value 
+           (query-maybe-value
             (current-database) q2 sport zone-metric timestamp))
           (#t
            #f)))
@@ -276,7 +312,7 @@ select max(zone_id) from V_SPORT_ZONE
   (define q1
     "select zone_id from V_SPORT_ZONE_FOR_SESSION where session_id = ? and zone_metric_id = ?")
   (query-maybe-value (current-database) q1 session zone-metric))
-  
+
 (define (get-sport-zones sport sub-sport zone-metric [timestamp #f])
   (if (current-database)
       (let ((zid (get-zone-definition-id sport sub-sport zone-metric timestamp)))
@@ -322,7 +358,7 @@ select max(zone_id) from V_SPORT_ZONE
    (current-database)
    (lambda ()
      (when (> (length zones) 3)
-       (query-exec (current-database) 
+       (query-exec (current-database)
                    "insert into SPORT_ZONE(sport_id, sub_sport_id, zone_metric_id, valid_from)
                     values (?, ?, ?, ?)"
                    sport (if sub-sport sub-sport sql-null) zone-metric (current-seconds))
@@ -332,14 +368,14 @@ select max(zone_id) from V_SPORT_ZONE
            (query-exec (current-database)
                        "insert into SPORT_ZONE_ITEM(sport_zone_id, zone_number, zone_value)
                       values(?, ?, ?)" zid znum zone)))))))
-                     
+
 (define (val->pct-of-max val zones)
   (let ((max (last zones)))
     (* (/ val max) 100.0)))
 
 
 (define (val->zone val zones)
-  
+
   (define (classify val low high)
     (cond ((<= val low) 0.0)
           ((>= val high) 1.0)
@@ -390,3 +426,40 @@ select max(zone_id) from V_SPORT_ZONE
 
 (define (put-athlete-height height (db (current-database)))
   (query-exec db "update ATHLETE set height = ?" (or height sql-null)))
+
+(define zone-labels '(z0 z1 z2 z3 z4 z5 z6 z7 z8 z9 z10))
+
+(define (zone->label z)
+  (define index (max 0 (min (sub1 (length zone-labels)) (exact-truncate z))))
+  (list-ref zone-labels index))
+
+;; We use too many ways to represent sport ids :-(
+(define (sport-id sport)
+  (cond ((number? sport) sport)
+        ((vector? sport) (vector-ref sport 0))
+        ((cons? sport) (car sport))
+        (#t #f)))
+
+(define (sub-sport-id sport)
+  (cond ((number? sport) #f)
+        ((vector? sport) (vector-ref sport 1))
+        ((cons? sport) (cdr sport))
+        (#t #f)))
+
+(define (sport-zones sport sid metric)
+  (if sid
+      (get-session-sport-zones sid metric)
+      (get-sport-zones (sport-id sport) (sub-sport-id sport) metric)))
+
+(define (is-runnig? sport)
+  (eqv? (sport-id sport) 1))
+
+(define (is-cycling? sport)
+  (eqv? (sport-id sport) 2))
+
+(define (is-lap-swimming? sport)
+  (and (eqv? (sport-id sport) 5)
+       (eqv? (sub-sport-id sport) 17)))
+
+(define (is-swimming? sport)
+  (eqv? (sport-id sport) 5))

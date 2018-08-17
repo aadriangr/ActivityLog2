@@ -2,7 +2,7 @@
 ;; edit-session-summary.rkt -- edit summary information about a session
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -21,7 +21,7 @@
          "../dbutil.rkt"
          "edit-session-tss.rkt"
          "../sport-charms.rkt"
-         "../session-df.rkt"
+         "../session-df/session-df.rkt"
          "../widgets/main.rkt")
 
 (provide get-edit-session-summary-dialog)
@@ -29,7 +29,7 @@
 (define edit-session-summary-dialog%
   (class edit-dialog-base%
     (init)
-    (super-new [title "Session Summary"] 
+    (super-new [title "Session Summary"]
                [icon (get-sport-bitmap-colorized #f #f)]
                [min-width 600]
                [min-height 500])
@@ -49,11 +49,11 @@
 
       (let ((p0 (make-horizontal-pane p #f)))
         (set! title-field (new text-field% [parent p0] [label "Name:"])))
-      
+
       (let ((p0 (make-horizontal-pane p #f)))
-          (set! start-date-field 
+          (set! start-date-field
                 (new date-input-field% [parent p0] [label "Date: "]))
-          (set! start-time-field 
+          (set! start-time-field
                 (new time-of-day-input-field% [parent p0] [label "Start Time: "])))
 
       (let  ((p0 (make-horizontal-pane p #f)))
@@ -64,7 +64,7 @@
                     (lambda (v)
                       (let ((icon (get-sport-bitmap-colorized (car v) (cdr v))))
                         (send this set-icon icon)))])))
-      
+
       (let ((p0 (make-horizontal-pane p #f)))
         (set! duration-field
               (new duration-input-field% [parent p0] [label "Time: "]))
@@ -85,7 +85,7 @@
                               "8 -- Really Hard"
                               "9 -- Really, Really Hard"
                               "10 -- Maximal")])))
-      
+
       (let ((p0 (new vertical-pane% [parent p]
                      [border 0] [spacing 5] [stretchable-height #f])))
         (set! labels-input (new label-input-field% [parent p0]))
@@ -93,7 +93,7 @@
 
       (let ((p0 (make-horizontal-pane p #t)))
         (set! description-field
-              (new text-field% [parent p0] 
+              (new text-field% [parent p0]
                    [label "Description: "] [style '(multiple)]))))
 
     (define/override (has-valid-data?)
@@ -113,7 +113,7 @@
 
          ;; Duration must not be empty (distance can be)
          (not (eq? duration 'empty)))))
-    
+
     (define (setup-for-session db session-id)
       (let ((r (query-row db "
 select S.name as title,
@@ -141,7 +141,7 @@ select S.name as title,
             (send this set-icon sicon)))
         (send labels-input setup-for-session db session-id)
         (send equipment-input setup-for-session db session-id)))
-    
+
     (define (setup-for-new-session db)
       (send title-field set-value "")
       ;; For convenience, set the current date instead of the empty field.
@@ -155,12 +155,12 @@ select S.name as title,
       (send this set-icon (get-sport-bitmap-colorized #f #f))
       (send labels-input setup-for-session db #f)
       (send equipment-input setup-for-session db #f))
-    
+
     (define (update-session db session-id)
       (call-with-transaction
        db
        (lambda ()
-         
+
          (let ((sport (send sport-choice get-selection))
                (name (send title-field get-value))
                (desc (send description-field get-value))
@@ -197,7 +197,7 @@ select S.name as title,
               db
               "update SECTION_SUMMARY set total_distance = ? where id = ?"
               (if (> distance 0) distance sql-null) ssid))
-           (when (or duration distance) 
+           (when (or duration distance)
              ;; If either duration or distance have changed, update the
              ;; average speed.  This should work correctly even if one of them
              ;; is null.
@@ -208,7 +208,7 @@ select S.name as title,
 
          (send labels-input update-session-tags session-id)
          (send equipment-input update-session-tags session-id))))
-    
+
     (define (insert-session db)
       (let* ((duration (let ((v (send duration-field get-converted-value)))
                          (if (eq? v 'empty) #f v)))
@@ -273,5 +273,3 @@ select S.name as title,
     (set! the-edit-session-summary-dialog
           (new edit-session-summary-dialog%)))
   the-edit-session-summary-dialog)
-
-

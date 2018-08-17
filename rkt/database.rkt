@@ -1141,12 +1141,12 @@
    (lambda (dbsys)
      "select start_time from A_SESSION where id = ?")))
 
-;; Clear the timestamp cache when the database changes
-(add-db-open-callback (lambda (c) (set! sid-timestamp-cache (make-hash))))
-
 ;; Clear individual entries when sessions change or are deleted -- no need to
 ;; handle session-created notifications, as they will be added to the cache
 ;; when they are first requested.
+;;
+;; Also monitor database opened messages and Clear the timestamp cache when
+;; the database changes
 (define dummy
   (let ((s (make-log-event-source)))
     (thread/dbglog
@@ -1155,8 +1155,10 @@
        (let loop ((item (async-channel-get s)))
          (when item
            (match-define (list tag data) item)
-           (when (member tag '(session-updated session-deleted))
-             (hash-remove! sid-timestamp-cache data))
+           (cond ((member tag '(session-updated session-deleted))
+                  (hash-remove! sid-timestamp-cache data))
+                 ((eq? tag 'database-opened)
+                  (set! sid-timestamp-cache (make-hash))))
            (loop (async-channel-get s))))))))
 
 ;; Return the start time of the session SID, of #f if no such session exists

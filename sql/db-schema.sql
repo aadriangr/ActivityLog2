@@ -353,6 +353,38 @@ create table XDATA_FIELD (
   -- can be NULL, indicating that the developer field does not correspond to
   -- any native field.
   native_field integer,
+  -- Headline to use when this series is shown in various drop down boxes in
+  -- the application.  If NULL, `name` will be used.
+  headline text,
+  -- Label for the plot when this series is plotted, if NULL, `unit_name` will
+  -- be used.
+  axis_label text,
+  -- Name if this series in the data frames.  If NULL, "xdata-ID" is used,
+  -- which is not very useful for a user.
+  series_name text,
+  -- Number of digits that are "relevant" for values in this data series
+  -- (e.g. for a distance series we might use 2 digits of precision allowing
+  -- centimeter level accuracy).  This is used when displaying values as well
+  -- as when grouping values for scatter plots.
+  fractional_digits integer,
+  -- Value to replace missing values in the data series.  If NULL, #f will be
+  -- used and the series will have gaps where the missing values are.
+  missing_value real,
+  -- multiplier for determining the final bucket width in a histogram, see
+  -- series-metadata%/histogram-bucket-slot.
+  histogram_bucket_slot real,
+  -- If false, this series does not have an inverter mean maximal, meaning
+  -- that smaller values are "better".  If true, it means that the mean
+  -- maximal is calculated as per normal, meaning that higher values are
+  -- better.  For example, Ground Contact Time has an inverted mean max,
+  -- because a smaller GCT value is a better one, power does not have an
+  -- inverted mean max, as higher values are better.
+  inverted_mean_max boolean,
+  -- Should values in this series be filtered in the application (the answer
+  -- is most likely yes).
+  should_filter boolean,
+  -- color to use for plotting these values
+  color text,
   foreign key (app_id) references XDATA_APP(id)
 );
 

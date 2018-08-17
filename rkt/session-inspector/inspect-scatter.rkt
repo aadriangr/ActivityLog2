@@ -2,7 +2,7 @@
 ;; inspect-scatter.rkt -- scatter plot for a session
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -27,7 +27,7 @@
          "../data-frame/slr.rkt"
          "../plot-hack.rkt"
          "../plot-util.rkt"
-         "../series-meta.rkt"
+         "../session-df/native-series.rkt"
          "../utilities.rkt"
          "../widgets/main.rkt")
 

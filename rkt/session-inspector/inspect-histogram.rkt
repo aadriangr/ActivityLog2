@@ -2,7 +2,7 @@
 ;; inspect-histogram.rkt -- histogram plot view for a session.
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -26,7 +26,7 @@
          "../fmt-util.rkt"
          "../plot-hack.rkt"
          "../plot-util.rkt"
-         "../series-meta.rkt"
+         "../session-df/native-series.rkt"
          "../utilities.rkt"
          "../widgets/main.rkt")
 
@@ -105,7 +105,7 @@
     (define pref-tag 'activity-log:histogram-plot)
 
     ;; Variables that control the look of the plot
-    (define axis-choices '())    
+    (define axis-choices '())
     (define y-axis-index 0)
     (define show-as-percentage? #f)
     (define include-zeroes? #t)
@@ -121,14 +121,14 @@
     ;; combination have their own parameters.
     (define params-by-axis (make-hash))
 
-    ;; Restore the preferences now. 
+    ;; Restore the preferences now.
     (let ((pref (get-pref pref-tag (lambda () #f))))
       (when (and pref (> (length pref) 0) (eq? (car pref) 'gen2))
         (match-define (list tag abs pba as-pct?) pref)
         (set! axis-by-sport (hash-copy abs))
         (set! params-by-axis (hash-copy pba))
         (set! show-as-percentage? as-pct?)))
-    
+
     ;; Root widget of the entire scatter plot panel
     (define panel
       (new (class vertical-panel%
@@ -140,7 +140,7 @@
 
     ;; Holds the widgets that control the look of the plot
     (define control-panel
-      (new horizontal-panel% 
+      (new horizontal-panel%
            [parent panel] [spacing 10] [border 0]
            [alignment '(center center)]
            [stretchable-height #f]))
@@ -156,7 +156,7 @@
            [callback (lambda (c e) (on-show-as-percentage (send c get-value)))]))
 
     (define bucket-width-field
-      (new number-input-field% [parent control-panel] 
+      (new number-input-field% [parent control-panel]
            [label "Bucket Width "] [cue-text "1 to 100"]
            [min-value 1] [max-value 100]
            [stretchable-width #f]
@@ -166,18 +166,18 @@
       (new check-box% [parent control-panel]
            [value include-zeroes?] [label "Include Zeroes"]
            [callback (lambda (c e) (on-include-zeroes (send c get-value)))]))
-    
+
     (define color-by-zone-check-box
       (new check-box% [parent control-panel]
            [value color-by-zone?] [label "Color by Zone"]
            [callback (lambda (c e) (on-color-by-zone (send c get-value)))]))
 
     (define outlier-trim-field
-      (new number-input-field% [parent control-panel] 
+      (new number-input-field% [parent control-panel]
            [label "Outlier Trim (%) "] [cue-text "0 .. 100%"]
            [min-value 0] [max-value 100]
            [stretchable-width #f]
-           [valid-value-cb 
+           [valid-value-cb
             (lambda (v) (let ((trim (if (eq? v 'empty) 0 v)))
                           (on-outlier-trim (/ trim 100))))]))
 
@@ -228,7 +228,7 @@
         (when (list? y-axis) (set! y-axis (second y-axis)))
         (send color-by-zone-check-box enable
               (send y-axis factor-fn sport sid))))
-    
+
     (define (on-y-axis-changed new-index)
       (unless (equal? y-axis-index new-index)
         (save-params-for-axis)
@@ -257,7 +257,7 @@
       (unless (equal? include-zeroes? flag)
         (set! include-zeroes? flag)
         (refresh-plot)))
-    
+
     (define (on-outlier-trim trim)
       (unless (equal? outlier-trim trim)
         (set! outlier-trim trim)
@@ -399,7 +399,7 @@
       (set! color-by-zone? #f)
       (send outlier-trim-field set-numeric-value 0)
       (on-outlier-trim 0))
-    
+
     ;; Restore the axis specific parameters for the current axis
     (define (restore-params-for-axis)
       (when (current-sport)

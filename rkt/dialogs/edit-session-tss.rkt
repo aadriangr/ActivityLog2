@@ -3,7 +3,7 @@
 ;; session
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -23,7 +23,7 @@
          "../sport-charms.rkt"
          "../dbutil.rkt"
          "../widgets/main.rkt"
-         "../session-df.rkt"
+         "../session-df/session-df.rkt"
          "../data-frame/df.rkt")
 
 (provide get-edit-session-tss-dialog)
@@ -173,7 +173,7 @@
     (define original-tss #f)            ; message% containing the session TSS (from the database)
 
     (define tss-selection-pane #f)
-    
+
     (define rpe-scale #f)               ; a choice% for selecting the RPE for a session
     (define swim-tpace #f)              ; a number-input-field% for the Swim T-Pace
     (define threshold-power #f)         ; a number-input-field% for the Functional Threshold Power
@@ -191,31 +191,31 @@
                             [stretchable-width #t])))
       (let ((hp (make-horizontal-pane p #f)))
         (new message% [parent hp] [label "Start time: "] [stretchable-width #f])
-        (set! start-time 
+        (set! start-time
               (new message% [parent hp] [label ""] [font message-font]
                    [min-width 150]
                    [stretchable-width #t]))
         (new message% [parent hp] [label "Duration: "] [stretchable-width #f])
-        (set! duration 
+        (set! duration
               (new message%
                    [parent hp] [label ""] [font message-font]
                    [min-width 80]
                    [stretchable-width #t]))
         (new message% [parent hp] [label "Original Effort: "])
-        (set! original-tss 
+        (set! original-tss
               (new message% [parent hp] [label "888"]
                    [min-width 80]
                    [font message-font] [stretchable-width #t])))
-      
+
       (let ((hp (make-horizontal-pane p #f)))
         (new choice% [parent hp] [label "Calculation Method: "]
              [choices (map car calculation-methods)]
              [callback (lambda (c e)
                          (let ((index (send c get-selection)))
-                           (on-tss-calculation-method 
+                           (on-tss-calculation-method
                             (cdr (list-ref calculation-methods index)))))])
         (set! tss-selection-pane (make-horizontal-pane hp #f)))
-      
+
       (set! rpe-scale
               (new choice% [parent tss-selection-pane]
                    [label "RPE: "] [style '(deleted)]
@@ -231,25 +231,25 @@
                               "9 -- Really, Really Hard"
                               "10 -- Maximal")]
                    [callback (lambda (c e) (calculate-tss))]))
-      
+
       (set! swim-tpace
-            (new swim-pace-input-field% [parent tss-selection-pane] 
+            (new swim-pace-input-field% [parent tss-selection-pane]
                  [label "Swim T-Pace: "] [style '(single deleted)]
                  [min-width 100] [stretchable-width #f]
                  [valid-value-cb (lambda (v) (calculate-tss))]))
-      
+
       (set! threshold-power
             (new number-input-field% [parent tss-selection-pane]
                  [label "Threshold Power: "] [style '(single deleted)]
                  [min-width 100] [stretchable-width #f]
                  [cue-text "watts"]
                  [valid-value-cb (lambda (v) (calculate-tss))]))
-      
+
       (set! manual-tss
             (new number-input-field% [parent tss-selection-pane]
                  [label "Effort: "] [style '(single deleted)]
                  [min-value 0]
-                 [min-width 100] 
+                 [min-width 100]
                  [stretchable-width #f]
                  [cue-text "tss"]
                  [valid-value-cb (lambda (v) (calculate-tss))]))
@@ -257,11 +257,11 @@
         (set! notice (new message% [parent hp] [label ""]
                                    [stretchable-width #t]
                                    [font message-font])))
-      
-      (let ((hp (make-horizontal-pane p #f)))  
+
+      (let ((hp (make-horizontal-pane p #f)))
         (new message% [parent hp] [label "Updated Effort: "])
-        (set! updated-tss 
-              (new message% [parent hp] [label "888"] 
+        (set! updated-tss
+              (new message% [parent hp] [label "888"]
                    [stretchable-width #t]
                    [font message-font]))))
 
@@ -304,18 +304,18 @@
               ;;  (let ((hr (effort-avg-hr effort))
               ;;        (zones (get-session-hr-zones effort))
               ;;        (duration (effort-duration effort)))
-              ;;    (cond ((not hr) 
+              ;;    (cond ((not hr)
               ;;           (send notice set-label "No heart rate data available"))
-              ;;          ((not zones) 
+              ;;          ((not zones)
               ;;           (send notice set-label "No heart rate zones defined"))
               ;;          (#t
               ;;           (set! computed-tss (zone->tss (val->zone hr zones) duration))))))
               ((hr-zone-2)
                (let ((hr (effort-avg-hr effort))
                      (zones (get-session-hr-zones session-id)))
-                 (cond ((not hr) 
+                 (cond ((not hr)
                         (send notice set-label "No heart rate data available"))
-                       ((not zones) 
+                       ((not zones)
                         (send notice set-label "No heart rate zones defined"))
                        (#t
                         (unless session-df
@@ -366,7 +366,7 @@
       (let ((tpace (get-athlete-swim-tpace db)))
         (when tpace
           (send swim-tpace set-pace-value tpace)))
-      
+
       (let ((row (query-row db "
 select name, sport_id, sub_sport_id, start_time from A_SESSION where id = ?"
                             sid)))
@@ -381,9 +381,9 @@ select name, sport_id, sub_sport_id, start_time from A_SESSION where id = ?"
 
     (define (update-session-tss sid db)
       (when (number? computed-tss)
-        (query-exec 
-         db 
-         "update A_SESSION set training_stress_score = ? where id = ?" 
+        (query-exec
+         db
+         "update A_SESSION set training_stress_score = ? where id = ?"
          computed-tss sid)
         ;; Update any data the user may have set while computing the TSS.  We
         ;; only update the relevant data
@@ -402,7 +402,7 @@ select name, sport_id, sub_sport_id, start_time from A_SESSION where id = ?"
            (let ((ftp (send threshold-power get-converted-value)))
              (when ftp
                (put-athlete-ftp ftp db)))))))
-    
+
     (define/override (has-valid-data?)
       (number? computed-tss))
 
@@ -416,7 +416,7 @@ select name, sport_id, sub_sport_id, start_time from A_SESSION where id = ?"
         (set! session-id #f)
         (set! database db)
         result))
-    
+
     (on-tss-calculation-method 'rpe)
 
     ))
@@ -454,7 +454,7 @@ select name, sport_id, sub_sport_id, start_time from A_SESSION where id = ?"
     (when (or force? (not (effort-tss effort)))
       (let ((tss (calculate-session-tss effort df session-id db)))
         (when tss
-          (query-exec 
-           db 
-           "update A_SESSION set training_stress_score = ? where id = ?" 
+          (query-exec
+           db
+           "update A_SESSION set training_stress_score = ? where id = ?"
            tss session-id))))))
