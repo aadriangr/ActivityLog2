@@ -2,7 +2,7 @@
 ;; fit-file.rkt -- read and write .FIT files.
 
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -124,7 +124,7 @@
                              #x5000 #x9C01 #x8801 #x4400))
 
   (define limit (or end (bytes-length buffer)))
-  
+
   (define (update-nibble crc b)
     (let ((tmp (vector-ref crc-table (bitwise-and crc #xf))))
       (let ((crc (bitwise-and (arithmetic-shift crc -4) #x0FFFF)))
@@ -298,7 +298,7 @@
   ;; with a byte string, it will validate the header than provide a
   ;; `read-next-value' method to read values.  It will keep track of the
   ;; current buffer position internally.
-  
+
   (class object% (init data) (super-new)
 
     (define buffer data)
@@ -488,7 +488,7 @@
   ;; track of message defintions and uses them to decode the actual messages.
   ;; The DISPATCHER is an object with a signle method "dispatch message-num
   ;; data", but see fit-event-dispatcher% for a nicer interface.
-  
+
   (define message-readers (make-hash))
   ;; Map a dev-data index to the basic FIT field type for that field.
   (define dev-field-types (make-hash))
@@ -563,7 +563,7 @@
   ;; suitable for the application.  Understanding the various messages
   ;; requires familiarity with the FIT file format and its messages.  These
   ;; are available in the FitSDK, in the Profile Excel document in it.
-  
+
   (class object% (init) (super-new)
 
     (define start-timestamp #f)
@@ -590,7 +590,7 @@
                     new-timestamp)))
         (unless start-timestamp
           (set! start-timestamp current-timestamp))
-            
+
         record))
 
     (define/public (get-start-timestamp) start-timestamp)
@@ -672,7 +672,7 @@
     (define devices '())
     (define sport '())
     (define training-file '())
-    
+
     ;; FIT 2.0 allows "developer" fields, these hold the definitions, for
     ;; referencing the dev fields in trackpoint data.
     (define developer-data-ids '())
@@ -740,25 +740,25 @@
         (left-right-balance . ,(lambda (t)
                                  (or (dict-ref t 'left-right-balance #f)
                                      (dict-ref t 'stance-time-balance #f))))
-        
+
         ;; Power phase start and end values are stored as a vector of values,
         ;; we store each individual value separately.  Same for peak power
         ;; phase.
         (left-pp-start . ,(lambda (t) (extract-angle t 'left-pp 0)))
         (left-pp-end . ,(lambda (t) (extract-angle t 'left-pp 1)))
-        
+
         (right-pp-start . ,(lambda (t) (extract-angle t 'right-pp 0)))
         (right-pp-end . ,(lambda (t) (extract-angle t 'right-pp 1)))
-        
+
         (left-ppp-start . ,(lambda (t) (extract-angle t 'left-peak-pp 0)))
         (left-ppp-end . ,(lambda (t) (extract-angle t 'left-peak-pp 1)))
-        
+
         (right-ppp-start . ,(lambda (t) (extract-angle t 'right-peak-pp 0)))
         (right-ppp-end . ,(lambda (t) (extract-angle t 'right-peak-pp 1)))
 
         (avg-left-pp-start . ,(lambda (t) (extract-angle t 'avg-left-pp 0)))
         (avg-left-pp-end . ,(lambda (t) (extract-angle t 'avg-left-pp 1)))
-        
+
         (avg-right-pp-start . ,(lambda (t) (extract-angle t 'avg-right-pp 0)))
         (avg-right-pp-end . ,(lambda (t) (extract-angle t 'avg-right-pp 1)))
 
@@ -767,7 +767,7 @@
 
         (avg-right-ppp-start . ,(lambda (t) (extract-angle t 'avg-right-peak-pp 0)))
         (avg-right-ppp-end . ,(lambda (t) (extract-angle t 'avg-right-peak-pp 1)))))
-    
+
     (define (process-fields record)
       ;; Convert some fields inside RECORD from the FIT representation to the
       ;; more convenient internal representation.
@@ -926,8 +926,8 @@
                                     (cons 'lengths (map add-length-records lengths))
                                     data)))
                          (when (> (length records) 0)
-                               (display "WARNING: remaining records after processing LENGTHS")
-                               (newline))
+                           (display "WARNING: remaining records after processing LENGTHS")
+                           (newline))
                          data)))))
 
         (set! records '())
@@ -955,25 +955,25 @@
             (type (dict-ref event 'event-type #f)))
 
         (cond
-         ((eq? e 'timer)
-          (cond ((eq? type 'stop-all)
-                 ;; (when (pair? records)
-                 ;;   (display (car records))(newline))
-                 (set! timer-stopped #t)
-                 (set! timer-stop-timestamp timestamp))
-                ((eq? type 'start)
-                 (when timer-stopped
-                   (set! display-next-record #t)
-                   ;; (display (format "*** PAUSE ~a seconds~%" (- timestamp timer-stop-timestamp)))
-                 (set! timer-stopped #f)))
-                (#t
-                 ;; (display (format "*** Unknown timer event ~a~%" event))
-                 #t)))
-         ((eq? e 'session)              ; not interested in these ones
-          #t)
-         (#t
-          ;; (display (format "*** EVENT: ~a~%" event))
-          )))
+          ((eq? e 'timer)
+           (cond ((eq? type 'stop-all)
+                  ;; (when (pair? records)
+                  ;;   (display (car records))(newline))
+                  (set! timer-stopped #t)
+                  (set! timer-stop-timestamp timestamp))
+                 ((eq? type 'start)
+                  (when timer-stopped
+                    (set! display-next-record #t)
+                    ;; (display (format "*** PAUSE ~a seconds~%" (- timestamp timer-stop-timestamp)))
+                    (set! timer-stopped #f)))
+                 (#t
+                  ;; (display (format "*** Unknown timer event ~a~%" event))
+                  #t)))
+          ((eq? e 'session)              ; not interested in these ones
+           #t)
+          (#t
+           ;; (display (format "*** EVENT: ~a~%" event))
+           )))
       #t)
 
     (define/override (on-developer-data-id data)
@@ -984,10 +984,12 @@
       ;; if there is one.  NOTE: we currently rely on the fact that developer
       ;; field names are unique and don't conflict with other fields, this
       ;; probably works with existing devices today.
-      (let ((native (dict-ref data 'native-msg-num #f))
+      (let ((native-msg (dict-ref data 'native-msg-num #f))
+            (native-field (dict-ref data 'native-field-num #f))
             (name (dict-ref data 'field-name #f)))
-        (when (and name native)
-          (let ((nname (dict-ref *record-fields* native #f)))
+        (when (and name native-field native-msg
+                   (eq? 'record (dict-ref *global-message-number* native-msg #f)))
+          (let ((nname (dict-ref *record-fields* native-field #f)))
             (when nname
               (let ((sym (string->symbol (bytes->string/utf-8 name))))
                 (set! native-to-dev (cons (cons nname sym) native-to-dev)))))))
@@ -996,7 +998,7 @@
 
     (define/public (display-devices)
       (for ((v (in-list (reverse devices))))
-           (display "*** ")(display v)(newline)))
+        (display "*** ")(display v)(newline)))
 
     (define/public (collect-activity)
 
@@ -1011,32 +1013,32 @@
 
       (when (or (> (length records) 0)
                 (> (length lengths) 0))
-            (display (format "WARNING: records and lengths wihtout enclosing lap~%"))
-            (on-lap `((timestamp . ,(get-current-timestamp))))
-            ;; Compute the summary data for the newly added lap
-            (let ((new-lap (car laps)))
-              (set! new-lap (append (compute-summary-data '() '() (list new-lap) '())
-                                    new-lap))
-              (set! laps (cons new-lap (cdr laps)))))
+        (display (format "WARNING: records and lengths wihtout enclosing lap~%"))
+        (on-lap `((timestamp . ,(get-current-timestamp))))
+        ;; Compute the summary data for the newly added lap
+        (let ((new-lap (car laps)))
+          (set! new-lap (append (compute-summary-data '() '() (list new-lap) '())
+                                new-lap))
+          (set! laps (cons new-lap (cdr laps)))))
 
       (set! laps (reverse laps))        ; put them in chronological order
 
       (let ((sessions (reverse (map add-session-laps (reverse sessions)))))
         (when (> (length laps) 0)
-              (display (format "WARNING: laps outisde a session~%"))
-              (let ((new-session (add-session-laps `((timestamp . ,(get-current-timestamp))
-                                                     ('sport . 'generic)))))
-                (set! new-session (append (compute-summary-data '() '() '() (list new-session))
-                                          new-session))
-                (set! sessions (cons new-session sessions))))
+          (display (format "WARNING: laps outisde a session~%"))
+          (let ((new-session (add-session-laps `((timestamp . ,(get-current-timestamp))
+                                                 ('sport . 'generic)))))
+            (set! new-session (append (compute-summary-data '() '() '() (list new-session))
+                                      new-session))
+            (set! sessions (cons new-session sessions))))
 
         (unless (null? devices)
-              ;; extra devices found (Garmin Swim does this, add them to the
-              ;; last session.  NOTE: this is a hack, we don't check if there
-              ;; are other devices attached to the last session.
-              (let ((last-session (car sessions)))
-                (set! sessions (cons (cons (cons 'devices devices) last-session)
-                                     (cdr sessions)))))
+          ;; extra devices found (Garmin Swim does this, add them to the
+          ;; last session.  NOTE: this is a hack, we don't check if there
+          ;; are other devices attached to the last session.
+          (let ((last-session (car sessions)))
+            (set! sessions (cons (cons (cons 'devices devices) last-session)
+                                 (cdr sessions)))))
 
         (list
          (cons 'start-time (or activity-timestamp (get-start-timestamp)))
@@ -1059,7 +1061,7 @@
   ;; Return a convenient device name from a DEVICE-INFO record.  This function
   ;; is somewhat simplistic and will need to be made more generic, w.r.t
   ;; mapping manufacturer, product to actual product names.
-  
+
   (let ((manufacturer (dict-ref device-info 'manufacturer #f))
         (product (dict-ref device-info 'product #f))
         (antdev (or (dict-ref device-info 'ant-device-type #f)
@@ -1100,7 +1102,7 @@
     (define header-length 14)
     (define protocol-version 16)
     (define profile-version 1322)
-    
+
     (define buffer (make-bytes header-length))
     (define mark header-length)
 
@@ -1130,7 +1132,7 @@
       (let ((header (bitwise-ior local-id #x40)))
         (bytes-set! buffer mark header)
         (set! mark (+ 1 mark)))
-      
+
       (bytes-set! buffer mark 0)        ; reserved byte
       (set! mark (+ 1 mark))
 
@@ -1154,7 +1156,7 @@
                   (typeid (fit-type-id type)))
 
               (set! message-size (+ message-size size))
-              
+
               (bytes-set! buffer mark fnum)
               (bytes-set! buffer (+ mark 1) size)
               (bytes-set! buffer (+ mark 2) typeid)
@@ -1197,7 +1199,7 @@
         (ensure-space-for 2)
         (integer->integer-bytes crc 2 #f #f buffer mark))
       (subbytes buffer 0 (+ 2 mark)))
-    
+
     ))
 
 
@@ -1213,7 +1215,7 @@
   (class fit-output-stream% (init)
     (init-field
      [file-type #f]
-     [manufacturer 1]                   ; Garmin 
+     [manufacturer 1]                   ; Garmin
      [product 65534]                    ; Connect
      [serial-number 1]
      [time-created #f]                  ; if #f, will be updated to current time
@@ -1240,7 +1242,7 @@
     ;; Write the file-id and file-creator messages immediately.  Both messages
     ;; use local-id 0.  Local-id 0 should also be available immediately, as
     ;; these messages will not be wrtten again.
-    
+
     (put-message-definition file-id-message 0 file-id-definition)
     (put-message
      file-id-message
@@ -1250,13 +1252,13 @@
        (serial-number . ,serial-number)
        (time-created . ,(unix-time->fit-time (or time-created (current-seconds))))
        (number . ,number)))
-    
+
     (put-message-definition file-creator-message 0 file-creator-definition)
     (put-message
      file-creator-message
      `((software-version . ,software-version)
        (hardware-version . ,hardware-version)))
-    
+
     ))
 
 
@@ -1282,7 +1284,7 @@
   (class fit-output-file% (init)
     (init-field name sport)
     (super-new [file-type 5])
-    
+
     (inherit put-message-definition put-message)
 
     ;; The index of each workout step.  This is automatically managed by the
@@ -1339,7 +1341,7 @@
       ;; workout to the file.
       (write-workout)
       (super get-fit-data))
-    
+
     ))
 
 
@@ -1431,11 +1433,11 @@
            `((message-index . ,message-index)
              (high-value . ,(exact-round (* 1000.0 val)))
              (name . ,(mk-fit-string "" 10)))))))
-                              
+
     (define/override (get-fit-data)
       (write-settings)
       (super get-fit-data))
-    
+
     ))
 
 
@@ -1478,7 +1480,7 @@
         (and date-of-birth
              (let ((date (seconds->date date-of-birth)))
                (- (date-year date) 1900))))
-      
+
       (put-message-definition user-profile-message 0 user-profile-message-definition)
       (put-message
        user-profile-message
@@ -1493,9 +1495,9 @@
       (put-message
        hrm-profile-message
        `((log-hrv . ,(if collect-hrv-data? 1 0)))))
-    
+
     (define/override (get-fit-data)
       (write-settings)
       (super get-fit-data))
-    
+
     ))
