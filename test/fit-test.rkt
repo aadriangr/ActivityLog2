@@ -60,7 +60,7 @@
   (when (for/and ([f (in-list files)]) (file-exists? f))
     (printf "File multi-checks on ~a ..." files)(flush-output)
     (define start (current-milliseconds))
-    (with-database
+    (with-fresh-database
       (lambda (db)
         (for ([f (in-list files)])
           (db-import-activity-from-file f db))
