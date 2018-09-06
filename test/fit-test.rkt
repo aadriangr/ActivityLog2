@@ -22,9 +22,11 @@
          "../rkt/session-df/series-metadata.rkt"
          "../rkt/session-df/native-series.rkt"
          "../rkt/weather.rkt"
-         "../rkt/database.rkt")
+         "../rkt/database.rkt"
+         "../rkt/utilities.rkt")
 
 (set-allow-weather-download #f)        ; don't download weather for unit tests
+(set-dbglog-to-standard-output #t)     ; send dbglog calls to stdout, so we can see them!
 
 (define (do-basic-checks file series-count row-count
                          #:expected-session-count (expected-session-count 1)
@@ -41,7 +43,7 @@
     (check-true (if (number? row-count)
                     (= expected-session-count 1)
                     (= expected-session-count (length row-count))))
-    (with-database
+    (with-fresh-database
       (lambda (db)
         (db-import-activity-from-file/check
          file db

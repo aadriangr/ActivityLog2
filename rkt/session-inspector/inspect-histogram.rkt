@@ -24,7 +24,6 @@
          "../data-frame/df.rkt"
          "../data-frame/histogram.rkt"
          "../fmt-util.rkt"
-         "../plot-hack.rkt"
          "../plot-util.rkt"
          "../session-df/native-series.rkt"
          "../utilities.rkt"
@@ -301,7 +300,7 @@
                                              (time-ticks))]
                            [plot-x-ticks (send y-axis plot-ticks)]
                            [plot-x-label (send y-axis axis-label)])
-              (define snip (plot-snip/hack plot-pb rt))
+              (define snip (plot-to-canvas rt plot-pb))
               (set-mouse-event-callback snip plot-hover-callback))))))
 
     ;; Build a plot render tree (PLOT-RT) based on current selections.  Note

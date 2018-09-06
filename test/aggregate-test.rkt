@@ -23,9 +23,11 @@
          "../rkt/dbapp.rkt"
          "../rkt/metrics.rkt"
          "../rkt/pdmodel.rkt"
-         "../rkt/session-df/native-series.rkt")
+         "../rkt/session-df/native-series.rkt"
+         "../rkt/utilities.rkt")
 
 ;;(require rackunit/gui)
+(set-dbglog-to-standard-output #t)     ; send dbglog calls to stdout, so we can see them!
 
 (define (check-mmax sport sub-sport year axis)
   ;; At this time we only check that the code runs and generates something

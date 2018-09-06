@@ -2,7 +2,7 @@
 ;; view-trends.rkt -- trends graphs
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2015 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2015, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -32,7 +32,8 @@
  "trends-tt.rkt"
  "trends-bavg.rkt"
  "trends-hist.rkt"
- "trends-scatter.rkt")
+ "trends-scatter.rkt"
+ "trends-ae.rkt")
 
 (provide view-trends%)
 
@@ -48,6 +49,7 @@
 (define-runtime-path trends-mmax-file "../../img/trends/trends-mmax.png")
 (define-runtime-path trends-hist-file "../../img/trends/trends-hist.png")
 (define-runtime-path trends-scatter-file "../../img/trends/trends-scatter.png")
+(define-runtime-path trends-ae-file "../../img/trends/trends-ae.png")
 
 ;; A trends chart declaration.  Contains some description and a sample image,
 ;; plus the class to be instantiated for the actual trends chart.
@@ -59,55 +61,62 @@
    description))
 
 (define chart-types
-  (list
-   (tdecl
-    "Body Weight" 'bw bw-trends-chart%
-    trends-bw-file
-    "Plot body weight over time")
+  (sort
+   (list
+    (tdecl
+     "Body Weight" 'bw bw-trends-chart%
+     trends-bw-file
+     "Plot body weight over time")
 
-   (tdecl
-    "Traning Volume (multisport)" 'trivol trivol-trends-chart%
-    trends-trivol-file
-    "Show training volume (time, distance, or number of activities) over time for triathlon activities (swim, bike, run and strength)")
+    (tdecl
+     "Traning Volume (multisport)" 'trivol trivol-trends-chart%
+     trends-trivol-file
+     "Show training volume (time, distance, or number of activities) over time for triathlon activities (swim, bike, run and strength)")
 
-   (tdecl
-    "Traning Volume" 'vol vol-trends-chart%
-    trends-vol-file
-    "Show training volume (time, distance, or number of activities) over time for an activity type"
+    (tdecl
+     "Traning Volume" 'vol vol-trends-chart%
+     trends-vol-file
+     "Show training volume (time, distance, or number of activities) over time for an activity type"
+     )
+
+    (tdecl
+     "Time in Zone" 'tiz tiz-trends-chart%
+     trends-tiz-file
+     "Show time spent in each heart rate zone for a selected activity type over time")
+
+    (tdecl
+     "Performance" 'pmc pmc-trends-chart%
+     trends-pmc-file
+     "Plot form, fitness and fatigue over time.")
+
+    (tdecl
+     "Aerobic Efficiency" 'ae ae-trends-chart%
+     trends-ae-file
+     "Plot Aerobic Efficiency over time. For running this is the ratio of heart rate to speed, for cycling it is the ratio of heart rate to power.")
+
+    (tdecl
+     "Training Times" 'tt tt-trends-chart%
+     trends-tt-file
+     "Plot the time of day over weekday when each activity occured.")
+
+    (tdecl
+     "Best Avg" 'bavg mmax-trends-chart%
+     trends-mmax-file
+     "Plot the mean maximal for a data series from selected activities.  Can also esitmate Critical Power or Critical Velocity.")
+
+    (tdecl
+     "Histogram" 'hist hist-trends-chart%
+     trends-hist-file
+     "Plot a histogram for the data series from selected activities."
+     )
+
+    (tdecl
+     "Scatter Plot" 'scatter scatter-trends-chart%
+     trends-scatter-file
+     "Scatter Plot for two data series from selected activities."
+     )
     )
-
-   (tdecl
-    "Time in Zone" 'tiz tiz-trends-chart%
-    trends-tiz-file
-    "Show time spent in each heart rate zone for a selected activity type over time")
-
-   (tdecl
-    "Performance" 'pmc pmc-trends-chart%
-    trends-pmc-file
-    "Plot form, fitness and fatigue over time.")
-
-   (tdecl
-    "Training Times" 'tt tt-trends-chart%
-    trends-tt-file
-    "Plot the time of day over weekday when each activity occured.")
-
-   (tdecl
-    "Best Avg" 'bavg mmax-trends-chart%
-    trends-mmax-file
-    "Plot the mean maximal for a data series from selected activities.  Can also esitmate Critical Power or Critical Velocity")
-
-   (tdecl
-    "Histogram" 'hist hist-trends-chart%
-    trends-hist-file
-    "Plot a histogram for the data series from selected activities."
-    )
-
-   (tdecl
-    "Scatter Plot" 'scatter scatter-trends-chart%
-    trends-scatter-file
-    "Scatter Plot for two data series from selected activities."
-    )
-   ))
+   string<? #:key tdecl-name))
 
 ;; Keep the loaded preview images for the chart types in a cache, we don't
 ;; load them at start up, since they might never be needed, but once loaded we
@@ -195,13 +204,19 @@
       (unless trend-chart
         (set! trend-chart (new trend-chart-class [database database]))
         (when restore-data
-          (send trend-chart restore-from restore-data))
+          (if (hash? restore-data)
+              (send trend-chart put-chart-settings restore-data)
+              ;; old trend charts used to use lists for their restore data,
+              ;; but that was not flexible...
+              (dbglog "discarding non-hash trend chart restore-data")))
         (set! graph-pb (new snip-canvas% [parent this]))))
 
     (define/public (get-name)
       (cond (trend-chart (send trend-chart get-name))
             ;; These are a bit of a hack, but we want to get the name of the
-            ;; tab without creating the trend chart itself
+            ;; tab without creating the trend chart itself.  Old style trend
+            ;; chart data was stored as lists some times, with the first
+            ;; element being the name.
             ((list? restore-data) (first restore-data))
             ((hash? restore-data) (hash-ref restore-data 'name))))
 
@@ -234,7 +249,7 @@
       ;; If the trend chart was not created, just return the previous restore
       ;; data, to be saved again.
       (if trend-chart
-          (list info-tag (send trend-chart get-restore-data))
+          (list info-tag (send trend-chart get-chart-settings))
           (list info-tag restore-data)))
 
     (define/public (export-image file-name)

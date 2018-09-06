@@ -34,7 +34,6 @@
          "../color-theme.rkt"
          "../data-frame/df.rkt"
          "../data-frame/scatter.rkt"
-         "../plot-hack.rkt"
          "../plot-util.rkt"
          "../session-df/native-series.rkt"
          "../sport-charms.rkt"
@@ -338,8 +337,8 @@
                          [plot-y-label (send y-axis axis-label)])
             (match-define (vector x-min x-max y-min y-max)
               (if (eq? outlier-handling 'mark) data-bounds quantile-bounds))
-            (plot-snip/hack
-             plot-pb (reverse rt)
+            (plot-to-canvas
+             (reverse rt) plot-pb
              #:x-min x-min #:x-max x-max #:y-min y-min #:y-max y-max)))))
 
     (define (refresh-plot)

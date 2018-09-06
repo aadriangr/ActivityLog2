@@ -3,7 +3,7 @@
 ;; trends-tt.rkt -- "Training Time chart, a punch card style chart
 ;;
 ;; This file is part of ActivityLog2, an fitness activity tracker
-;; Copyright (C) 2016 Alex Harsanyi (AlexHarsanyi@gmail.com)
+;; Copyright (C) 2016, 2018 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU General Public License as published by the Free
@@ -26,17 +26,16 @@
  racket/format
  "../database.rkt"
  "trends-chart.rkt"
+ "../plot-util.rkt"
  "../widgets/main.rkt"
- "../plot-hack.rkt"
  "../sport-charms.rkt"
  "../data-frame/df.rkt"
  "../data-frame/sql.rkt"
  "../data-frame/csv.rkt"
- "../al-widgets.rkt")
+ "../al-widgets.rkt"
+ "../plot-util.rkt")
 
 (provide tt-trends-chart%)
-
-(struct tt-params tc-params (start-date end-date sport tri-activities?))
 
 (define tt-chart-settings%
   (class edit-dialog-base%
@@ -66,48 +65,32 @@
     (define (on-triathlon-activties flag)
       (send sport-selector enable (not flag)))
 
-    (define/public (get-restore-data)
-      (list
-       (send name-field get-value)
-       (send title-field get-value)
-       (send date-range-selector get-restore-data)
-       (send sport-selector get-selection)
-       (send tri-checkbox get-value)
-       ))
+    (define/public (get-chart-settings)
+      (hash
+       'name (send name-field get-value)
+       'title (send title-field get-value)
+       'date-range (send date-range-selector get-restore-data)
+       'timestamps (send date-range-selector get-selection)
+       'sport (send sport-selector get-selection)
+       'tri? (send tri-checkbox get-value)))
 
-    (define/public (restore-from data)
+    (define/public (put-chart-settings data)
       (when database
         (send date-range-selector set-seasons (db-get-seasons database)))
-      (match-define (list d0 d1 d2 d3 d4) data)
-      (send name-field set-value d0)
-      (send title-field set-value d1)
-      (send date-range-selector restore-from d2)
-      (send sport-selector set-selected-sport (car d3) (cdr d3))
-      (send tri-checkbox set-value d4)
-      (on-triathlon-activties d4))
+      (send name-field set-value (hash-ref data 'name))
+      (send title-field set-value (hash-ref data 'title))
+      (send date-range-selector restore-from (hash-ref data 'date-range))
+      (let ((sp (hash-ref data 'sport #f)))
+        (when sp
+          (send sport-selector set-selected-sport (car sp) (cdr sp))))
+      (send tri-checkbox set-value (hash-ref data 'tri?))
+      (on-triathlon-activties (hash-ref data 'tri?)))
 
     (define/public (show-dialog parent)
       (when database
         (send date-range-selector set-seasons (db-get-seasons database)))
-      (if (send this do-edit parent)
-          (get-settings)
-          #f))
+      (and (send this do-edit parent) (get-chart-settings)))
 
-    (define/public (get-settings)
-      (let ((dr (send date-range-selector get-selection)))
-        (if dr
-            (let ((start-date (car dr))
-                  (end-date (cdr dr)))
-              (when (eqv? start-date 0)
-                (set! start-date (get-true-min-start-date database)))
-              (tt-params
-               (send name-field get-value)
-               (send title-field get-value)
-               start-date
-               end-date
-               (send sport-selector get-selection)
-               (send tri-checkbox get-value)))
-            #f)))
     ))
 
 (define tt-tri-stmt
@@ -327,8 +310,8 @@ select round(strftime('%w', S.start_time, 'unixepoch', 'localtime'), 0) as dow,
   (if renderer-tree
       (generate-plot
        (lambda (rt)
-         (plot-snip/hack
-          canvas #:x-min -1 #:x-max 7 #:y-min -1 #:y-max 25 rt))
+         (plot-to-canvas
+          rt canvas #:x-min -1 #:x-max 7 #:y-min -1 #:y-max 25))
        renderer-tree)
     (begin
       (send canvas set-snip #f)
@@ -340,8 +323,6 @@ select round(strftime('%w', S.start_time, 'unixepoch', 'localtime'), 0) as dow,
 
     (define data-valid? #f)
     (define tt-data #f)                 ; a data-frame%
-    (define tri? #f)
-    (define sport #f)
 
     (define/override (make-settings-dialog)
       (new tt-chart-settings%
@@ -358,7 +339,7 @@ select round(strftime('%w', S.start_time, 'unixepoch', 'localtime'), 0) as dow,
           (hash-ref events 'session-updated #f)))
 
     (define/override (export-data-to-file file formatted?)
-      (when tt-data
+      (when (and tt-data (> (df-row-count tt-data) 0))
         (call-with-output-file file
           (lambda (out) (export-data-as-csv out formatted?))
           #:mode 'text #:exists 'truncate)))
@@ -369,43 +350,47 @@ select round(strftime('%w', S.start_time, 'unixepoch', 'localtime'), 0) as dow,
       (define actual-series
         (for/list ([series all-series] #:when (df-contains? tt-data series))
           series))
-      (apply df-write/csv out tt-data actual-series))
+      (apply df-write/csv tt-data out actual-series))
 
     (define/override (put-plot-snip canvas)
       (maybe-fetch-data)
       (if data-valid?
-          (begin
-            (insert-plot-snip canvas (make-renderer-tree tri? tt-data sport)))
+          (let* ((params (send this get-chart-settings))
+                 (sport (hash-ref params 'sport))
+                 (tri? (hash-ref params 'tri?))
+                 (rt (make-renderer-tree tri? tt-data sport)))
+            (insert-plot-snip canvas rt))
           (begin
             (send canvas set-snip #f)
             (send canvas set-background-message "No data to plot"))))
 
     (define/override (save-plot-image file-name width height)
       (when data-valid?
-        (save-plot-to-file file-name width height
-                           (make-renderer-tree tri? tt-data sport))))
+        (define params (send this get-chart-settings))
+        (define sport (hash-ref params 'sport))
+        (define tri? (hash-ref params 'tri?))
+        (define rt (make-renderer-tree tri? tt-data sport))
+        (save-plot-to-file file-name width height rt)))
 
     (define (maybe-fetch-data)
       (unless data-valid?
-        (let ((params (send this get-params)))
+        (let ((params (send this get-chart-settings)))
           (when params
-            (let ((start (tt-params-start-date params))
-                  (end (tt-params-end-date params)))
-              (set! sport (tt-params-sport params))
-              (set! tri? (tt-params-tri-activities? params))
-              (set! tt-data
-                    (if tri?
-                        (df-read/sql database tt-tri-stmt start end)
-                        (let ()
-                          (match-define (cons sport-id sub-sport-id) sport)
-                          (cond ((and sport-id sub-sport-id)
-                                 (df-read/sql database tt-sport-stmt-1
-                                              start end sport-id sub-sport-id))
-                                (sport-id
-                                 (df-read/sql database tt-sport-stmt-2
-                                              start end sport-id))
-                                (#t
-                                 (df-read/sql database tt-sport-stmt-3 start end))))))
-              (set! data-valid? (> (df-row-count tt-data) 0)))))))
+            (match-define (cons start end) (hash-ref params 'timestamps (cons 0 0)))
+            (match-define (cons sport-id sub-sport-id)
+              (hash-ref params 'sport))
+            (define tri? (hash-ref params 'tri?))
+            (set! tt-data
+                  (if tri?
+                      (df-read/sql database tt-tri-stmt start end)
+                      (cond ((and sport-id sub-sport-id)
+                             (df-read/sql database tt-sport-stmt-1
+                                          start end sport-id sub-sport-id))
+                            (sport-id
+                             (df-read/sql database tt-sport-stmt-2
+                                          start end sport-id))
+                            (#t
+                             (df-read/sql database tt-sport-stmt-3 start end)))))
+            (set! data-valid? (> (df-row-count tt-data) 0))))))
 
     ))

@@ -25,7 +25,6 @@
          "../data-frame/df.rkt"
          "../data-frame/scatter.rkt"
          "../data-frame/slr.rkt"
-         "../plot-hack.rkt"
          "../plot-util.rkt"
          "../session-df/native-series.rkt"
          "../utilities.rkt"
@@ -474,7 +473,7 @@
                            [plot-y-label (send y-axis axis-label)])
               (match-define (vector x-min x-max y-min y-max)
                 (if (eq? outlier-handling 'mark) (bounds) (qbounds)))
-              (plot-snip/hack plot-left-pb rt
+              (plot-to-canvas rt plot-left-pb
                               #:x-min x-min #:x-max x-max
                               #:y-min y-min #:y-max y-max))))
 
@@ -500,7 +499,7 @@
                            [plot-y-label (send y-axis axis-label)])
               (match-define (vector x-min x-max y-min y-max)
                 (if (eq? outlier-handling 'mark) (bounds) (qbounds)))
-              (plot-snip/hack plot-right-pb rt
+              (plot-to-canvas rt plot-right-pb
                               #:x-min x-min #:x-max x-max
                               #:y-min y-min #:y-max y-max)))))))
 
